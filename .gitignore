@@ -1,0 +1,28 @@
+# C/C++ build
+build/
+build-*/
+*.o
+*.so
+*.dylib
+*.a
+
+# Go
+bin/
+vendor/
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+*.swp
+
+# Generated proto
+*.pb.go
+*.pb.cc
+*.pb.h

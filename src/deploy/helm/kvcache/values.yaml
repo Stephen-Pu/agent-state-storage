@@ -1,0 +1,106 @@
+# Helm values for the kvcache chart. LLD §7 / §8.
+
+# ---- Images ----
+image:
+  registry: ghcr.io/alluxio
+  node:
+    repository: kvstore-node
+    tag: "0.1.0"
+  cp:
+    repository: kvcache-control-plane
+    tag: "0.1.0"
+  operator:
+    repository: kvcache-operator
+    tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+# ---- Etcd (LLD §7.2) ----
+etcd:
+  # Set byoEtcd=true and supply `endpoints` to point at an existing etcd cluster.
+  byoEtcd: false
+  endpoints: []
+  # Internal etcd (deployed by the chart when !byoEtcd).
+  replicaCount: 3
+  storage:
+    size: 8Gi
+    storageClass: ""
+  image:
+    repository: quay.io/coreos/etcd
+    tag: "v3.5.13"
+
+# ---- Control Plane ----
+controlPlane:
+  replicaCount: 3
+  resources:
+    requests: { cpu: "200m", memory: "256Mi" }
+    limits:   { cpu: "1",    memory: "1Gi"   }
+  leaderElect: true
+
+# ---- KVStore Node DaemonSet ----
+node:
+  # Schedule only on nodes with this label set (GPU nodes by default).
+  nodeSelector:
+    nvidia.com/gpu: "true"
+  tier:
+    # LLD §7.1 — co-located default budgets per node.
+    pinnedBytes: "32Gi"
+    dramBytes:   "128Gi"
+    nvme:
+      enabled: true
+      path:  "/var/lib/kvcache/nvme.bin"
+      bytes: "1Ti"
+    cold:
+      enabled: false
+  nixlBackend: "ucx"     # ucx | gdr | gds | tcp | nvlink | loopback
+  resources:
+    requests: { cpu: "4",   memory: "150Gi" }
+    limits:   { cpu: "8",   memory: "300Gi" }
+
+# ---- Alluxio binding (T4 cold tier) ----
+alluxio:
+  binding:
+    enabled: false
+    # Path of the alluxio-fuse mount on each host.
+    mountPath: "/mnt/alluxio"
+    subdir:    "kvcache"
+
+# ---- Operator ----
+operator:
+  enabled: true
+  replicaCount: 1
+  resources:
+    requests: { cpu: "100m", memory: "128Mi" }
+    limits:   { cpu: "500m", memory: "512Mi" }
+
+# ---- Observability ----
+observability:
+  prometheus:
+    serviceMonitor:
+      enabled: true
+      labels: {}
+    # Alerting rules included by default — see LLD §6.2 (5 alerts).
+    rules:
+      enabled: true
+  grafana:
+    dashboards:
+      enabled: true
+
+# ---- mTLS (cert-manager) ----
+mtls:
+  # When enabled, the chart issues a self-signed Issuer + Certificate per
+  # component. For production, override `issuerRef` with your CA Issuer.
+  enabled: true
+  issuerRef:
+    name: ""
+    kind: "Issuer"
+
+# ---- Multi-tenancy ----
+tenants:
+  # Sample tenants for the demo. Real deployments will use KVCacheTenant CRs.
+  - name: "demo"
+    tenantID: "00112233445566778899aabbccddeeff"
+    quota:
+      capacityBytes: "10Gi"
+      qps:           1000
+      bandwidthBytesPerSecond: "1Gi"
+    defaultPriority: "P1"

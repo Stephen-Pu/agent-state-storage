@@ -1,0 +1,157 @@
+// LLD §4.1 / §5.1 — Control Plane ↔ Node RPCs.
+//
+// Three concerns:
+//   1. Membership   — Register / Heartbeat / state-transition events.
+//   2. Quota        — CP is the authoritative quota source; nodes cache.
+//   3. Config + bloom fan-out  — push tenant config and aggregated cluster view.
+syntax = "proto3";
+package kvcache.proto;
+
+import "events.proto";
+
+option go_package = "github.com/alluxio/kvcache/control-plane/internal/pb";
+
+// ============================================================================
+// Node  -> CP
+// ============================================================================
+
+service ControlPlane {
+  rpc Register   (RegisterRequest)   returns (RegisterResponse);
+  rpc Heartbeat  (HeartbeatRequest)  returns (HeartbeatResponse);
+
+  // Bidirectional config + cluster view stream. Server pushes config /
+  // quota updates / aggregated bloom; node pushes local bloom + usage.
+  rpc Sync       (stream NodeStatus) returns (stream ClusterUpdate);
+}
+
+message RegisterRequest {
+  string node_id       = 1;  // UUID
+  string host          = 2;  // hostname / IP
+  string version       = 3;  // build version
+  NodeCapacity capacity = 4;
+  repeated string supported_transports = 5; // ib, roce, tcp, nvlink, gds, ...
+}
+
+message NodeCapacity {
+  uint64 pinned_bytes = 1;
+  uint64 dram_bytes   = 2;
+  uint64 nvme_bytes   = 3;
+  uint32 numa_nodes   = 4;
+  uint32 vcpus        = 5;
+}
+
+message RegisterResponse {
+  string  cluster_id   = 1;
+  bytes   ca_bundle    = 2;  // PEM
+  uint64  initial_epoch = 3;
+}
+
+message HeartbeatRequest {
+  string node_id     = 1;
+  uint64 epoch       = 2;
+  NodeState state    = 3;
+  NodeUsage usage    = 4;
+}
+
+enum NodeState {
+  NODE_STATE_UNSPECIFIED = 0;
+  NODE_JOINING          = 1;
+  NODE_ACTIVE           = 2;
+  NODE_DRAINING         = 3;
+  NODE_UNREACHABLE      = 4;
+  NODE_TERMINATED       = 5;
+}
+
+message NodeUsage {
+  uint64 pinned_used_bytes = 1;
+  uint64 dram_used_bytes   = 2;
+  uint64 nvme_used_bytes   = 3;
+  uint64 sealed_chunks     = 4;
+  double cpu_pct           = 5;
+  double nic_bps           = 6;
+}
+
+message HeartbeatResponse {
+  uint64 lease_ttl_seconds = 1;
+}
+
+// Sync stream: small structured messages.
+message NodeStatus {
+  oneof payload {
+    HeartbeatRequest    heartbeat = 1;
+    LocalBloomSketch    bloom     = 2;
+    TenantUsageReport   usage     = 3;
+  }
+}
+
+message ClusterUpdate {
+  oneof payload {
+    AggregatedBloom     bloom      = 1;
+    TenantConfig        tenant     = 2;
+    PriorityWeights     priorities = 3;
+    NodeDirectoryDelta  members    = 4;
+  }
+}
+
+message LocalBloomSketch {
+  string tenant_id  = 1;
+  bytes  bits       = 2;
+  uint32 k_hashes   = 3;
+  uint32 m_bits     = 4;
+  uint64 epoch      = 5;
+}
+
+message AggregatedBloom {
+  string tenant_id           = 1;
+  bytes  bits                = 2;
+  uint32 k_hashes            = 3;
+  uint32 m_bits              = 4;
+  repeated string contributing_nodes = 5;
+}
+
+// ============================================================================
+// Tenant + Quota   (LLD §5.1)
+// ============================================================================
+
+message TenantConfig {
+  string tenant_id         = 1;
+  Quota  quota             = 2;
+  uint32 default_priority  = 3;  // 0=P0, 1=P1, 2=P2
+  bool   deletion_pending  = 4;  // right-to-erase in progress
+}
+
+// 3D quota: capacity / QPS / bandwidth (LLD §5.1).
+message Quota {
+  uint64 capacity_bytes   = 1;
+  uint32 qps              = 2;
+  uint64 bandwidth_bps    = 3;
+  // 1.5× inflation kicks in if CP unreachable > 1h (LLD §4.1).
+  bool   inflated         = 4;
+}
+
+message TenantUsageReport {
+  string tenant_id        = 1;
+  uint64 capacity_bytes   = 2;
+  uint64 served_requests  = 3;
+  uint64 bytes_transferred = 4;
+  uint32 quota_breaches   = 5;
+}
+
+message PriorityWeights {
+  // Reservation pool percentages (LLD §5.1): P0/P1/P2 = 20%/75%/5%.
+  uint32 p0_pct = 1;
+  uint32 p1_pct = 2;
+  uint32 p2_pct = 3;
+}
+
+message NodeDirectoryDelta {
+  repeated NodeEntry added   = 1;
+  repeated string    removed = 2;  // node_ids
+}
+
+message NodeEntry {
+  string    node_id = 1;
+  string    host    = 2;
+  NodeState state   = 3;
+  uint64    epoch   = 4;
+}

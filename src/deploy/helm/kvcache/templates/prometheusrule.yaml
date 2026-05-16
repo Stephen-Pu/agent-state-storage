@@ -1,0 +1,50 @@
+{{- if and .Values.observability.prometheus.serviceMonitor.enabled .Values.observability.prometheus.rules.enabled -}}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ .Release.Name }}-alerts
+  labels: {{- include "kvcache.labels" . | nindent 4 }}
+spec:
+  # LLD §6.2 — 5 default alert rules.
+  groups:
+    - name: kvcache
+      rules:
+        - alert: KVCacheHitRateDrop
+          expr: |
+            sum(rate(kv_cache_hits_total{tier!="miss"}[5m]))
+            /
+            sum(rate(kv_cache_hits_total[5m])) < 0.30
+          for: 10m
+          labels: { severity: warning }
+          annotations:
+            summary: "KV cache hit rate dropped below 30% for 10m"
+
+        - alert: KVCacheColdTierLatencyHigh
+          expr: |
+            histogram_quantile(0.99, sum by(le)(rate(kv_latency_seconds_bucket{tier="cold"}[5m]))) > 5
+          for: 5m
+          labels: { severity: warning }
+          annotations:
+            summary: "Cold-tier p99 latency above 5s"
+
+        - alert: KVCacheNodeUnhealthy
+          expr: kvcache_node_state{state="unreachable"} > 0
+          for: 1m
+          labels: { severity: critical }
+          annotations:
+            summary: "At least one kvstore-node is unreachable"
+
+        - alert: KVCacheQuotaBreach
+          expr: increase(kv_tenant_quota_breaches_total[10m]) > 0
+          for: 0m
+          labels: { severity: warning }
+          annotations:
+            summary: "Tenant quota breach observed"
+
+        - alert: KVCacheEvictionStorm
+          expr: rate(kv_node_eviction_rate[5m]) > 100
+          for: 5m
+          labels: { severity: warning }
+          annotations:
+            summary: "Eviction rate sustained > 100/s — capacity may be undersized"
+{{- end -}}

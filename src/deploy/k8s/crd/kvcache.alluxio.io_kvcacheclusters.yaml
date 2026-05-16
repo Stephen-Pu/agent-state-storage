@@ -1,0 +1,78 @@
+# Generated form of the KVCacheCluster CRD. In CI this file is rebuilt from
+# the Go types via `controller-gen crd paths=./api/... output:crd:dir=...`.
+# Editing it by hand is fine for review and Step-8 bring-up.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: kvcacheclusters.kvcache.alluxio.io
+spec:
+  group: kvcache.alluxio.io
+  scope: Namespaced
+  names:
+    plural: kvcacheclusters
+    singular: kvcachecluster
+    kind: KVCacheCluster
+    shortNames: ["kvc"]
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      additionalPrinterColumns:
+        - name: NodeReplicas
+          type: integer
+          jsonPath: .spec.nodeReplicas
+        - name: Active
+          type: integer
+          jsonPath: .status.nodesActive
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required: [nodeReplicas, image, tier]
+              properties:
+                nodeReplicas:
+                  type: integer
+                  minimum: 1
+                image:
+                  type: string
+                tier:
+                  type: object
+                  required: [pinnedBytes, dramBytes]
+                  properties:
+                    pinnedBytes: { type: string }
+                    dramBytes:   { type: string }
+                    nvmePath:    { type: string }
+                    nvmeBytes:   { type: string }
+                    enableCold:  { type: boolean }
+                nixlBackend:
+                  type: string
+                  enum: [ucx, gdr, gds, tcp, nvlink, loopback]
+                byoEtcd:        { type: boolean }
+                etcdEndpoints:  { type: array, items: { type: string } }
+                alluxioBinding:
+                  type: object
+                  properties:
+                    mountPath: { type: string }
+                    subdir:    { type: string }
+                nodeResources:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+            status:
+              type: object
+              properties:
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                nodesActive:      { type: integer }
+                nodesJoining:     { type: integer }
+                nodesUnreachable: { type: integer }
+                nodesDraining:    { type: integer }
+      subresources:
+        status: {}

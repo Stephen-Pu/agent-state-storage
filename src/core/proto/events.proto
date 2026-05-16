@@ -1,0 +1,53 @@
+// LLD §2.2 — KV Event schema. Shared by Node-internal pubsub, CP fan-out,
+// and the public kv_subscribe_events ABI callback.
+syntax = "proto3";
+package kvcache.proto;
+
+option go_package = "github.com/alluxio/kvcache/control-plane/internal/pb";
+
+// 64-byte Locator on the wire. Field order MUST match include/kvcache/kv_types.h.
+// We do NOT use proto bytes-of-64 because the C++ side mmaps the struct directly;
+// this message is the gRPC representation only.
+message Locator {
+  bytes  tenant_id     = 1; // 16B
+  fixed64 model_id_hash = 2;
+  bytes  prefix_hash   = 3; // 16B
+  Range  range         = 4;
+  uint32 version       = 5; // currently 1
+  uint32 flags         = 6;
+}
+
+message Range {
+  uint32 layer_start = 1;
+  uint32 layer_count = 2;
+  uint32 head_start  = 3;
+  uint32 head_count  = 4;
+  uint32 token_start = 5;
+  uint32 token_count = 6;
+}
+
+enum EventType {
+  EVENT_UNSPECIFIED = 0;
+  EVENT_ADD         = 1; // sealed chunk became visible
+  EVENT_EVICT       = 2; // removed from a tier
+  EVENT_PROMOTE     = 3; // moved to hotter tier
+  EVENT_DEMOTE      = 4; // moved to colder tier
+}
+
+enum Tier {
+  TIER_UNSPECIFIED = 0;
+  TIER_HBM         = 1;
+  TIER_PINNED      = 2;
+  TIER_DRAM        = 3;
+  TIER_NVME        = 4;
+  TIER_COLD        = 5;
+}
+
+message Event {
+  EventType type      = 1;
+  Tier      tier      = 2;
+  Locator   locator   = 3;
+  uint64    epoch     = 4; // monotonic, per-node
+  string    node_id   = 5; // emitter (informational)
+  int64     unix_nano = 6;
+}

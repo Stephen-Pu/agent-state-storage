@@ -1,0 +1,166 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Cancel in-flight runs on the same branch to save CI minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # C/C++ build + unit tests
+  # ---------------------------------------------------------------------------
+  cpp:
+    name: C++ build + gtest
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build g++ pkg-config
+
+      - name: Configure
+        run: cmake -S src -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: ctest
+        run: ctest --test-dir build --output-on-failure --timeout 60
+
+      - name: Inspect artifacts
+        if: always()
+        run: |
+          ls -la build/core-abi || true
+          file build/core-abi/libkvcache.so 2>/dev/null || true
+
+  # ---------------------------------------------------------------------------
+  # Go control-plane — fast unit tests (excluded: integration tag)
+  # ---------------------------------------------------------------------------
+  go-cp:
+    name: Go control-plane
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: src/control-plane
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: src/control-plane/go.sum
+
+      - name: vet
+        run: go vet ./...
+
+      - name: build
+        run: go build ./...
+
+      - name: test (unit, no integration tag)
+        run: go test ./... -short -count=1
+
+  # ---------------------------------------------------------------------------
+  # Go control-plane — embedded-etcd integration test
+  # ---------------------------------------------------------------------------
+  go-cp-integration:
+    name: Go control-plane (integration / embedded etcd)
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: src/control-plane
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: src/control-plane/go.sum
+      - name: test (integration)
+        run: go test -tags=integration -count=1 -timeout 2m ./internal/membership/...
+
+  # ---------------------------------------------------------------------------
+  # Go operator + kvctl — build only (controller scaffolding has no tests yet)
+  # ---------------------------------------------------------------------------
+  go-operator:
+    name: Go operator
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: src/operator
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: src/operator/go.sum
+      - run: go vet ./...
+      - run: go build ./...
+
+  go-kvctl:
+    name: Go kvctl
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: src/kvctl
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: src/kvctl/go.sum
+      - run: go vet ./...
+      - run: go build ./...
+
+  # ---------------------------------------------------------------------------
+  # Python adapter — runs the in-process E2E demo against the C ABI.
+  # ---------------------------------------------------------------------------
+  python-adapter:
+    name: Python adapter (E2E demo)
+    needs: cpp
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build g++ pkg-config
+
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+
+      - name: Install Python deps
+        run: pip install cffi pytest
+
+      - name: Build libkvcache.so
+        run: |
+          cmake -S src -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+            -DKVCACHE_BUILD_TESTS=OFF
+          cmake --build build --target kvcache -j
+
+      - name: pytest E2E demo
+        env:
+          KVCACHE_LIB: ${{ github.workspace }}/build/core-abi/libkvcache.so
+        run: pytest src/adapters/vllm/tests -v
+
+  # ---------------------------------------------------------------------------
+  # Helm chart lint
+  # ---------------------------------------------------------------------------
+  helm-lint:
+    name: Helm lint
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with: { version: "v3.14.0" }
+      - run: helm lint src/deploy/helm/kvcache
+      - run: helm template kvcache src/deploy/helm/kvcache > /tmp/rendered.yaml
+      - run: head -40 /tmp/rendered.yaml

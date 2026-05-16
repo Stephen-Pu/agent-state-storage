@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kvcache-vllm-adapter"
+version = "0.1.0"
+description = "vLLM KVConnectorBase adapter for KV Cache (calls libkvcache.so via cffi)"
+requires-python = ">=3.10"
+dependencies = [
+    "cffi>=1.16",
+    # "vllm>=0.6.0",  # uncomment once pinning is decided
+]
+
+[tool.setuptools.packages.find]
+where = ["."]

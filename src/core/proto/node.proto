@@ -1,0 +1,141 @@
+// LLD §3 / §4 — Node ↔ Node and KVAgent ↔ Node RPCs.
+//
+// All data transfers (KV bytes) flow over NIXL Pull, NOT gRPC. gRPC carries
+// only metadata: lookup queries, slot reservation tickets, seal commits,
+// event subscription, bloom-sketch fan-out.
+syntax = "proto3";
+package kvcache.proto;
+
+import "events.proto";
+
+option go_package = "github.com/alluxio/kvcache/control-plane/internal/pb";
+
+// ============================================================================
+// KVAgent  -> Node  (data-plane control)
+// ============================================================================
+
+service NodeData {
+  // LPM over the local ART. Hot path, p99 ≤ 10µs (LLD §9.1).
+  rpc Lookup    (LookupRequest)    returns (LookupResponse);
+
+  // Allocate a mutable T1 slot for streaming write (LLD §3.4).
+  rpc Reserve   (ReserveRequest)   returns (ReserveResponse);
+
+  // Advance watermark on an in-progress streaming write.
+  rpc Publish   (PublishRequest)   returns (PublishResponse);
+
+  // Submit a fetch plan; server schedules NIXL Pull (LLD §3.5 / §5.1).
+  rpc Fetch     (FetchRequest)     returns (FetchResponse);
+
+  // Atomic seal: RocksDB write + ART insert + ADD event (LLD §3.4).
+  rpc Seal      (SealRequest)      returns (SealResponse);
+
+  // Caller-side refcount drop.
+  rpc Release   (ReleaseRequest)   returns (ReleaseResponse);
+
+  // Server-side push of KV events (LLD §2.2). Long-lived stream.
+  rpc Subscribe (SubscribeRequest) returns (stream Event);
+}
+
+message LookupRequest {
+  string  tenant_id      = 1;  // mTLS-attested; double-checked server-side
+  fixed64 model_id_hash  = 2;
+  repeated uint32 tokens = 3;  // request token prefix
+  uint32  client_epoch   = 4;  // optimistic concurrency w/ routing cache
+}
+
+message LookupResponse {
+  bool     hit              = 1;
+  Locator  locator          = 2;
+  fixed64  server_handle    = 3;  // opaque, server-issued; used by Fetch/Release
+  uint32   matched_tokens   = 4;
+  TierMap  tier_residency   = 5;  // which tiers hold which ranges (informational)
+}
+
+message TierMap {
+  // Per-tier coverage bitmap (over the locator's full range). The agent does
+  // not act on this directly — it informs telemetry and debugging only.
+  repeated TierCoverage tiers = 1;
+}
+
+message TierCoverage {
+  Tier   tier              = 1;
+  uint32 covered_tokens    = 2;
+  uint32 covered_layers    = 3;
+}
+
+message ReserveRequest {
+  Locator locator      = 1;
+  uint64  bytes        = 2;
+  uint32  priority     = 3;  // 0=P0, 1=P1, 2=P2 (LLD §5.1)
+  uint32  ttl_seconds  = 4;  // 0 = server default (5 min)
+}
+
+message ReserveResponse {
+  fixed64 server_handle = 1;
+  // The NIXL-registered slot the caller writes into.
+  uint64  slot_iova     = 2;  // server-mapped address
+  uint64  slot_bytes    = 3;
+  uint32  mr_key        = 4;  // NIXL memory key
+}
+
+message PublishRequest {
+  fixed64 server_handle = 1;
+  uint64  watermark     = 2;
+}
+message PublishResponse {
+  // Scheduler may report queue position for backpressure (informational).
+  uint32 queue_position = 1;
+}
+
+message FetchRequest {
+  fixed64  server_handle  = 1;
+  repeated Range ranges   = 2;
+  // Destination buffer descriptor (caller-side NIXL MR).
+  uint64   dst_iova       = 3;
+  uint64   dst_bytes      = 4;
+  uint32   dst_mr_key     = 5;
+  uint32   priority       = 6;
+}
+
+message FetchResponse {
+  fixed64 completion_id = 1;  // poll/await via Subscribe or a future Wait RPC
+}
+
+message SealRequest    { fixed64 server_handle = 1; }
+message SealResponse   { Locator locator = 1; uint64 epoch = 2; }
+
+message ReleaseRequest { fixed64 server_handle = 1; }
+message ReleaseResponse{}
+
+message SubscribeRequest {
+  string  tenant_id     = 1;
+  uint64  start_epoch   = 2;  // 0 = "from now"
+  repeated EventType include = 3; // empty = all
+}
+
+// ============================================================================
+// Node  <->  Node  (cluster-internal)
+// ============================================================================
+
+service NodePeer {
+  // Pull bloom-sketch view of peer's cache (LLD §4.2). Called every 30s by CP.
+  rpc GetBloomSketch (BloomSketchRequest) returns (BloomSketchResponse);
+
+  // Health probe (LLD §4.1 — Etcd lease + this for fast path).
+  rpc Ping (PingRequest) returns (PingResponse);
+}
+
+message BloomSketchRequest {
+  string tenant_id = 1; // empty = all
+}
+message BloomSketchResponse {
+  bytes  bits         = 1; // serialized bloom filter
+  uint64 num_inserted = 2;
+  uint32 k_hashes     = 3;
+  uint32 m_bits       = 4;
+  uint64 epoch        = 5;
+}
+
+message PingRequest  { uint64 nonce = 1; }
+message PingResponse { uint64 nonce = 1; uint64 node_epoch = 2; }

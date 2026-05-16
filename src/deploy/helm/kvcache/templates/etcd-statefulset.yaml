@@ -1,0 +1,69 @@
+{{- if not .Values.etcd.byoEtcd -}}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Release.Name }}-etcd
+  labels: {{- include "kvcache.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ .Release.Name }}-etcd
+  replicas: {{ .Values.etcd.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kvcache
+      app.kubernetes.io/component: etcd
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kvcache
+        app.kubernetes.io/component: etcd
+    spec:
+      containers:
+        - name: etcd
+          image: "{{ .Values.etcd.image.repository }}:{{ .Values.etcd.image.tag }}"
+          command:
+            - /usr/local/bin/etcd
+          args:
+            - --name=$(POD_NAME)
+            - --data-dir=/var/lib/etcd
+            - --listen-client-urls=http://0.0.0.0:2379
+            - --advertise-client-urls=http://$(POD_NAME).$(SERVICE_NAME):2379
+            - --listen-peer-urls=http://0.0.0.0:2380
+            - --initial-advertise-peer-urls=http://$(POD_NAME).$(SERVICE_NAME):2380
+            - --initial-cluster-state=new
+            - --initial-cluster={{- range $i, $_ := until (int .Values.etcd.replicaCount) }}{{- if $i -}},{{- end -}}{{ $.Release.Name }}-etcd-{{ $i }}=http://{{ $.Release.Name }}-etcd-{{ $i }}.{{ $.Release.Name }}-etcd:2380{{- end -}}
+          env:
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: SERVICE_NAME
+              value: "{{ .Release.Name }}-etcd"
+          ports:
+            - { name: client, containerPort: 2379 }
+            - { name: peer,   containerPort: 2380 }
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/etcd }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.etcd.storage.size }}
+        {{- if .Values.etcd.storage.storageClass }}
+        storageClassName: {{ .Values.etcd.storage.storageClass }}
+        {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-etcd
+  labels: {{- include "kvcache.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: kvcache
+    app.kubernetes.io/component: etcd
+  ports:
+    - { name: client, port: 2379, targetPort: client }
+    - { name: peer,   port: 2380, targetPort: peer }
+{{- end -}}

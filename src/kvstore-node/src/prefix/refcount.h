@@ -1,0 +1,67 @@
+// LLD §3.2 — Per-node, non-distributed refcount.
+//
+// Each ART leaf carries a refcount that is held by:
+//   - In-flight Lookup → Fetch → Release cycles (caller-side hold).
+//   - Streaming-write reservation (Reserve → Seal | TTL expiry).
+//   - Tier migration (promotion / demotion holds while bytes are in motion).
+//
+// Eviction is blocked while refcount > 0. The counter is per-node only — the
+// LLD explicitly rejects a distributed refcount (§3.2 "节点本地 refcount, 不分布式").
+//
+// Cluster-level visibility of "this chunk is in use somewhere" rides on the
+// bloom-sketch view (§4.2), not on this counter.
+#pragma once
+
+#include <atomic>
+#include <cstdint>
+
+namespace kvcache::node::prefix {
+
+class Refcount {
+   public:
+    Refcount() noexcept = default;
+    explicit Refcount(uint32_t initial) noexcept : v_(initial) {}
+
+    // Non-copyable; never want accidental sharing of the atomic.
+    Refcount(const Refcount&)            = delete;
+    Refcount& operator=(const Refcount&) = delete;
+
+    // Returns the new value after the increment.
+    uint32_t Acquire() noexcept {
+        return v_.fetch_add(1, std::memory_order_acq_rel) + 1;
+    }
+
+    // Returns the new value after the decrement. Asserts in debug builds that
+    // the caller is not under-flowing.
+    uint32_t Release() noexcept {
+        uint32_t prev = v_.fetch_sub(1, std::memory_order_acq_rel);
+        // TODO(stephen): convert to DCHECK once logging facade is wired in.
+        // Underflow indicates a missing Acquire/Release pairing somewhere.
+        return prev - 1;
+    }
+
+    // Try to increment iff the current value is non-zero. Used by lookup paths
+    // that must not resurrect a leaf the evictor has already claimed.
+    bool TryAcquireIfNonZero() noexcept {
+        uint32_t cur = v_.load(std::memory_order_acquire);
+        while (cur != 0) {
+            if (v_.compare_exchange_weak(cur, cur + 1,
+                                         std::memory_order_acq_rel,
+                                         std::memory_order_acquire)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    uint32_t Load() const noexcept {
+        return v_.load(std::memory_order_acquire);
+    }
+
+    bool IsZero() const noexcept { return Load() == 0; }
+
+   private:
+    std::atomic<uint32_t> v_{0};
+};
+
+}  // namespace kvcache::node::prefix

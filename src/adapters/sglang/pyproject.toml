@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kvcache-sglang-adapter"
+version = "0.1.0"
+description = "sglang adapter for KV Cache (calls libkvcache.so via cffi)"
+requires-python = ">=3.10"
+dependencies = ["cffi>=1.16"]
+
+[tool.setuptools.packages.find]
+where = ["."]

@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ .Release.Name }}-node
+  labels: {{- include "kvcache.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kvcache
+      app.kubernetes.io/component: kvstore-node
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kvcache
+        app.kubernetes.io/component: kvstore-node
+    spec:
+      hostNetwork: true   # RDMA / NIXL backends typically need host net
+      nodeSelector: {{- toYaml .Values.node.nodeSelector | nindent 8 }}
+      containers:
+        - name: kvstore-node
+          image: {{ include "kvcache.nodeImage" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: NODE_NAME
+              valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
+            - name: KVCACHE_CP_ENDPOINT
+              value: "{{ .Release.Name }}-cp:9090"
+            - name: KVCACHE_TIER_PINNED_BYTES
+              value: "{{ .Values.node.tier.pinnedBytes }}"
+            - name: KVCACHE_TIER_DRAM_BYTES
+              value: "{{ .Values.node.tier.dramBytes }}"
+            {{- if .Values.node.tier.nvme.enabled }}
+            - name: KVCACHE_TIER_NVME_PATH
+              value: "{{ .Values.node.tier.nvme.path }}"
+            - name: KVCACHE_TIER_NVME_BYTES
+              value: "{{ .Values.node.tier.nvme.bytes }}"
+            {{- end }}
+            - name: KVCACHE_NIXL_BACKEND
+              value: "{{ .Values.node.nixlBackend }}"
+          ports:
+            - { name: grpc, containerPort: 9091 }
+            - { name: metrics, containerPort: 8080 }
+          securityContext:
+            capabilities:
+              add: ["IPC_LOCK"]   # pinned memory mlock
+          resources: {{- toYaml .Values.node.resources | nindent 12 }}
+          volumeMounts:
+            {{- if .Values.node.tier.nvme.enabled }}
+            - { name: nvme,     mountPath: /var/lib/kvcache }
+            {{- end }}
+            {{- if .Values.alluxio.binding.enabled }}
+            - { name: alluxio,  mountPath: "{{ .Values.alluxio.binding.mountPath }}", mountPropagation: HostToContainer }
+            {{- end }}
+      volumes:
+        {{- if .Values.node.tier.nvme.enabled }}
+        - name: nvme
+          hostPath: { path: /var/lib/kvcache, type: DirectoryOrCreate }
+        {{- end }}
+        {{- if .Values.alluxio.binding.enabled }}
+        - name: alluxio
+          hostPath: { path: "{{ .Values.alluxio.binding.mountPath }}", type: Directory }
+        {{- end }}

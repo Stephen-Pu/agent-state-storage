@@ -1,0 +1,30 @@
+# Build outputs
+/build/
+/cmake-build-*/
+*.o
+*.so
+*.dylib
+*.a
+
+# Go
+bin/
+pkg/
+vendor/
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+.tox/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Generated
+*.pb.go
+*.pb.cc
+*.pb.h
