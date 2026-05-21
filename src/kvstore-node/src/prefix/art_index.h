@@ -14,31 +14,35 @@
 // Tree shape (this reference implementation):
 //   * Every inner node has 256 child slots indexed by the FIRST byte of the
 //     next ChunkHash on the path. This is the "Node256" specialization.
-//   * The remaining 7 bytes of that ChunkHash live on the edge to the child as
-//     an "edge label" (path compression).
+//   * The remaining 7 bytes of that ChunkHash live on the edge to the child
+//     as an "edge label" (path compression).
 //   * MVP: Node256-only — uses ~2 KiB per inner node. The Node4 / Node16 /
 //     Node48 specializations from Leis et al. 2013 are deferred — see
 //     TODO(perf-art-adaptive). Functional correctness is unchanged.
 //
-// Concurrency:
-//   * The reference impl uses a single shared_mutex: writers (Insert / Remove
-//     / Replace) take it exclusively, readers (Lookup) take it shared. This is
-//     intentionally simple and correct; it does NOT meet the LLD §9.1
-//     "lookup p99 ≤ 10µs" target under write contention. The production
-//     replacement is epoch-based reclamation (TODO(perf-art-epoch)). The
-//     public interface is designed so this change is purely internal.
+// Concurrency model (epoch-based, LLD §9.1 p99 ≤ 10µs):
+//   * Readers walk the tree using `std::atomic<ArtNode*>` loads (acquire).
+//     They do NOT take any mutex; the only synchronisation is the 2-atom
+//     epoch-publish on EnterRead/ExitRead.
+//   * Writers (Insert / Remove) serialise via a private mutex. They publish
+//     new nodes with atomic stores (release) and push replaced nodes onto
+//     the EpochManager's retire list. Readers that started before the swap
+//     keep a valid pointer; the retired node is freed once their witness
+//     advances past the retire epoch.
+//   * No reader-vs-writer contention: writers never block readers.
+//
+// See prefix/epoch.h for the EBR primitives.
 #pragma once
 
 #include <array>
 #include <atomic>
 #include <cstdint>
 #include <memory>
-#include <optional>
-#include <shared_mutex>
+#include <mutex>
 #include <span>
-#include <vector>
 
 #include "kvcache/kv_types.h"
+#include "prefix/epoch.h"
 #include "prefix/refcount.h"
 
 namespace kvcache::node::prefix {
@@ -62,25 +66,19 @@ struct LeafData {
                           bytes_total{0} {}
 };
 
-// ---------------------------------------------------------------------------
-// Forward declarations for the internal node types.
-// ---------------------------------------------------------------------------
-struct ArtNode;       // tagged union: inner or leaf
-struct ArtInner256;   // MVP: only inner-node specialization
+// Forward declarations of internal node types (defined in art_index.cpp).
+struct ArtNode;
+struct ArtInner256;
 struct ArtLeaf;
 
-// ---------------------------------------------------------------------------
-// ArtIndex
-// ---------------------------------------------------------------------------
 class ArtIndex {
    public:
     ArtIndex();
     ~ArtIndex();
-
     ArtIndex(const ArtIndex&)            = delete;
     ArtIndex& operator=(const ArtIndex&) = delete;
 
-    // ---- writer API (exclusive lock internally) ----
+    // ---- writer API (serialised by an internal writer mutex) ----
 
     enum class InsertResult {
         kInserted,        // new leaf created
@@ -88,64 +86,72 @@ class ArtIndex {
         kPathConflict,    // edge-label mismatch (should never happen with hashes)
     };
 
-    // Insert or replace a sealed leaf at `path`. Ownership of the supplied
-    // LeafData moves into the tree.
     InsertResult Insert(std::span<const ChunkHash> path,
                         std::unique_ptr<LeafData> leaf);
 
-    // Remove a leaf at exactly `path`. Returns true if a leaf was removed.
-    // The leaf is destroyed only after the writer lock is released — this is
-    // safe because Lookup holds the shared lock while reading the pointer.
+    // Remove a leaf at exactly `path`. The freed node is retired through the
+    // EpochManager — concurrent readers that observed the leaf keep working
+    // until they exit their guard.
     bool Remove(std::span<const ChunkHash> path);
 
     // ---- reader API ----
 
+    // RAII guard wrapping an EpochManager EnterRead/ExitRead pair. Move-
+    // constructible so callers can `auto g = art.EnterRead();`.
     class ReaderGuard {
        public:
         ReaderGuard() = default;
-        explicit ReaderGuard(std::shared_mutex& m) : lock_(m) {}
-        // Non-copyable; movable.
+        explicit ReaderGuard(EpochManager& m) noexcept : guard_(m) {}
+
         ReaderGuard(const ReaderGuard&)            = delete;
         ReaderGuard& operator=(const ReaderGuard&) = delete;
         ReaderGuard(ReaderGuard&&) noexcept            = default;
         ReaderGuard& operator=(ReaderGuard&&) noexcept = default;
 
+        bool active() const noexcept { return guard_.active(); }
+
        private:
-        std::shared_lock<std::shared_mutex> lock_;
+        EpochGuard guard_;
     };
 
-    // Acquire a reader guard. Must outlive every pointer returned by Lookup
-    // on this guard.
+    // Acquire a reader guard. Every pointer returned by a subsequent Lookup
+    // is valid until this guard is destroyed.
     ReaderGuard EnterRead() const;
 
     struct LookupResult {
         std::size_t matched_chunks{0};
-        // Pointer to in-tree storage. Valid until the corresponding ReaderGuard
-        // is destroyed. Caller MUST call leaf->refcount.Acquire() before
-        // releasing the guard if they intend to hold across reads.
         LeafData*   leaf{nullptr};
     };
 
-    // Longest-prefix-match over `path`. Returns the deepest leaf whose
-    // chunk-path is a prefix of `path`, or `{0, nullptr}` if none.
+    // Longest-prefix-match. The `guard` parameter pins reclamation while
+    // the returned leaf pointer is in use; it is not actually consulted at
+    // runtime — it exists only to make the lifetime contract explicit at
+    // the type level.
     LookupResult Lookup(std::span<const ChunkHash> path,
-                        const ReaderGuard&) const;
+                        const ReaderGuard& guard) const;
 
     // ---- stats ----
-    std::size_t LeafCount() const noexcept;
-    std::size_t NodeCount() const noexcept;
+    std::size_t LeafCount() const noexcept {
+        return leaf_count_.load(std::memory_order_acquire);
+    }
+    std::size_t NodeCount() const noexcept {
+        return node_count_.load(std::memory_order_acquire);
+    }
+
+    // ---- maintenance ----
+    // Run a pass of epoch-protected reclamation. Returns the number of
+    // retired nodes freed. Typically called by a background sweeper or
+    // by tests; never required for correctness.
+    std::size_t RunReclaim() const { return epochs_.Reclaim(); }
+
+    EpochManager& epoch_manager() const noexcept { return epochs_; }
 
    private:
-    mutable std::shared_mutex mu_;
-
-    // Root is always an inner node. Path from root → leaf:
-    //   level i:  edge labeled by ChunkHash_i (8 bytes)
-    // The first byte selects the child slot; the remaining 7 are the edge
-    // label stored in the child's `edge_tail` field.
-    std::unique_ptr<ArtInner256> root_;
-
-    std::size_t leaf_count_ = 0;
-    std::size_t node_count_ = 0;  // inner nodes only
+    mutable std::mutex            writer_mu_;
+    mutable EpochManager          epochs_;
+    std::unique_ptr<ArtInner256>  root_;
+    std::atomic<std::size_t>      leaf_count_{0};
+    std::atomic<std::size_t>      node_count_{0};
 };
 
 }  // namespace kvcache::node::prefix

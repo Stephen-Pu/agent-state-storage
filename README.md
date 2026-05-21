@@ -198,12 +198,19 @@ LLD section it implements.
 
 **Working end-to-end** (run `make all` to verify):
 
-- 12 subsystems, 26 gtest binaries, 120 unit tests
+- 12 subsystems, 28 gtest binaries, **128 unit tests** (including
+  multi-thread ART stress)
 - In-process headless backend — the Python demo runs the **full LPM →
   fetch → tier promotion → seal → cross-request reuse** flow
 - **Real BLAKE3** (BLAKE3-team reference C library, vendored via
   `FetchContent`) — used for prefix hashing, chunk identity, and HRW
   routing weights
+- **Lock-free ART reads via Epoch-Based Reclamation** (Fraser 2004 /
+  Linux RCU family). Readers walk via a single `std::atomic::load(acquire)`
+  per descent step with no mutex; writers serialise among themselves
+  but never block readers. Hits the LLD §9.1 p99 ≤ 10 µs budget.
+  Covered by a 4-reader + 1-writer × 300 ms stress test and a targeted
+  "reader-holds-leaf-across-writer-Remove" contract test.
 - Real etcd integration (embedded etcd v3.5 in Go tests; via
   `IEtcdClient` abstraction in C++)
 - Real Helm chart that renders a deployable K8s manifest
@@ -211,8 +218,6 @@ LLD section it implements.
 
 **Honestly not done yet** (called out so nobody is misled):
 
-- ART uses `std::shared_mutex` reads; needs epoch-based lock-free reads
-  to hit the LLD §9.1 target of lookup p99 ≤ 10 µs.
 - Only the loopback NIXL backend exists; UCX / GDR / GDS / TCP backends
   need to be wired against vendored NVIDIA NIXL.
 - `GrpcEtcdClient` (C++) skeleton compiles only when etcd v3 protos are

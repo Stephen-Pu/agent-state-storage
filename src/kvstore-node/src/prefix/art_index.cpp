@@ -1,11 +1,16 @@
-// LLD §3.2 — ART reference implementation (Node256-only, shared_mutex).
+// LLD §3.2 — ART implementation (Node256-only, epoch-based lock-free reads).
 //
-// See art_index.h for the design rationale and the two TODO replacements
-// (Node4/16/48 adaptive specialization and epoch-based reclamation).
+// Threading model:
+//   * Insert / Remove take `writer_mu_` (writers serialise among themselves).
+//     They mutate the tree via atomic stores and retire replaced nodes
+//     through the EpochManager.
+//   * Lookup is wait-free: a single atomic load per descent step, no mutex.
+//     The caller's EpochGuard (see ReaderGuard) pins reclamation for the
+//     pointers it returns.
 #include "prefix/art_index.h"
 
 #include <cstring>
-#include <mutex>  // std::unique_lock — not transitively included by <shared_mutex>
+#include <utility>
 
 namespace kvcache::node::prefix {
 
@@ -28,8 +33,23 @@ struct ArtNode {
 };
 
 struct ArtInner256 : ArtNode {
-    std::array<std::unique_ptr<ArtNode>, 256> children{};
-    ArtInner256() : ArtNode(ArtNodeTag::Inner256) {}
+    // Child pointers are atomic so readers can walk them without locking.
+    // Each pointer is either nullptr, an ArtInner256*, or an ArtLeaf*.
+    // Writers own these atoms (under writer_mu_) and publish via release.
+    std::array<std::atomic<ArtNode*>, 256> children{};
+
+    ArtInner256() : ArtNode(ArtNodeTag::Inner256) {
+        for (auto& c : children) c.store(nullptr, std::memory_order_relaxed);
+    }
+
+    // Destructor: walks children and frees the tree. Only safe when no
+    // readers remain (called from ArtIndex destructor after epoch flush).
+    ~ArtInner256() override {
+        for (auto& c : children) {
+            ArtNode* p = c.load(std::memory_order_relaxed);
+            delete p;  // nullptr OK
+        }
+    }
 };
 
 struct ArtLeaf : ArtNode {
@@ -53,21 +73,6 @@ inline void SetEdge(ArtNode& child, const ChunkHash& h) {
     child.edge_tail_valid = true;
 }
 
-// Sentinel pointer used by FindOrSlot to signal a first-byte collision with
-// non-matching edge tail. With 8-byte BLAKE3 fragments such a collision has
-// probability ~2^-56 per pair — effectively impossible — but we surface it
-// rather than silently overwrite.
-ArtNode* const kCollisionSentinel = reinterpret_cast<ArtNode*>(uintptr_t{1});
-
-ArtNode* FindOrSlot(ArtInner256& parent, const ChunkHash& h, uint8_t* slot_out) {
-    const uint8_t slot = h[0];
-    *slot_out = slot;
-    auto& child = parent.children[slot];
-    if (!child) return nullptr;
-    if (!EdgeMatches(*child, h)) return kCollisionSentinel;
-    return child.get();
-}
-
 }  // namespace
 
 // ---------------------------------------------------------------------------
@@ -78,101 +83,119 @@ ArtIndex::ArtIndex() : root_(std::make_unique<ArtInner256>()) {
     root_->edge_tail_valid = false;  // root has no incoming edge
 }
 
-ArtIndex::~ArtIndex() = default;
-
-ArtIndex::ReaderGuard ArtIndex::EnterRead() const { return ReaderGuard(mu_); }
-
-std::size_t ArtIndex::LeafCount() const noexcept {
-    std::shared_lock lk(mu_);
-    return leaf_count_;
+ArtIndex::~ArtIndex() {
+    // Force reclaim any retired nodes before walking the tree, since the
+    // destructor will delete in-place via root_'s recursive dtor. Doing
+    // this in the right order also catches application bugs (readers
+    // surviving the index) — ForceReclaimAll runs deleters regardless of
+    // active readers, which is the right thing at destruction.
+    epochs_.ForceReclaimAll();
+    // root_ unique_ptr dtor walks tree and deletes nodes.
 }
-std::size_t ArtIndex::NodeCount() const noexcept {
-    std::shared_lock lk(mu_);
-    return node_count_;
+
+ArtIndex::ReaderGuard ArtIndex::EnterRead() const {
+    return ReaderGuard(epochs_);
 }
 
 ArtIndex::InsertResult ArtIndex::Insert(std::span<const ChunkHash> path,
                                         std::unique_ptr<LeafData> leaf) {
     if (path.empty()) return InsertResult::kPathConflict;
 
-    std::unique_lock lk(mu_);
+    std::lock_guard lk(writer_mu_);
 
+    // Walk inner nodes, creating new ones as needed.
     ArtInner256* cur = root_.get();
     for (std::size_t i = 0; i + 1 < path.size(); ++i) {
         const ChunkHash& h = path[i];
-        uint8_t slot;
-        ArtNode* existing = FindOrSlot(*cur, h, &slot);
-        if (existing == kCollisionSentinel) return InsertResult::kPathConflict;
+        const uint8_t slot = h[0];
+        ArtNode* existing =
+            cur->children[slot].load(std::memory_order_acquire);
 
-        if (!existing) {
-            auto child = std::make_unique<ArtInner256>();
+        if (existing) {
+            if (!EdgeMatches(*existing, h)) {
+                return InsertResult::kPathConflict;
+            }
+            if (existing->tag == ArtNodeTag::Leaf) {
+                // MVP: leaves are terminal. Splitting would require
+                // re-attaching the leaf under a new inner node.
+                return InsertResult::kPathConflict;
+            }
+            cur = static_cast<ArtInner256*>(existing);
+        } else {
+            auto* child = new ArtInner256();
             SetEdge(*child, h);
-            cur->children[slot] = std::move(child);
-            ++node_count_;
-            existing = cur->children[slot].get();
-        } else if (existing->tag == ArtNodeTag::Leaf) {
-            // Splitting an existing leaf into an inner-with-leaf is not
-            // supported in this MVP — leaves are terminal. TODO(stephen):
-            // implement split if streaming-write later seals partial chunks.
-            return InsertResult::kPathConflict;
+            // Publish with release so readers acquire-loading this slot
+            // see a fully-constructed node.
+            cur->children[slot].store(child, std::memory_order_release);
+            node_count_.fetch_add(1, std::memory_order_relaxed);
+            cur = child;
         }
-        cur = static_cast<ArtInner256*>(existing);
     }
 
-    // Final hop: attach a leaf.
+    // Terminal hop: attach (or replace) a leaf.
     const ChunkHash& last = path.back();
-    uint8_t slot;
-    ArtNode* existing = FindOrSlot(*cur, last, &slot);
-    if (existing == kCollisionSentinel) return InsertResult::kPathConflict;
+    const uint8_t slot = last[0];
+    ArtNode* existing = cur->children[slot].load(std::memory_order_acquire);
 
-    if (existing && existing->tag == ArtNodeTag::Leaf) {
-        static_cast<ArtLeaf*>(existing)->data = std::move(leaf);
-        return InsertResult::kReplaced;
-    }
-    if (existing && existing->tag == ArtNodeTag::Inner256) {
-        // An inner node sits where we wanted to attach a leaf — would need
-        // "leaf hanging off inner" semantics; not supported in MVP.
+    if (existing && !EdgeMatches(*existing, last)) {
         return InsertResult::kPathConflict;
     }
-    auto leaf_node = std::make_unique<ArtLeaf>();
-    SetEdge(*leaf_node, last);
-    leaf_node->data = std::move(leaf);
-    cur->children[slot] = std::move(leaf_node);
-    ++leaf_count_;
+    if (existing && existing->tag == ArtNodeTag::Inner256) {
+        return InsertResult::kPathConflict;
+    }
+
+    auto* new_leaf = new ArtLeaf();
+    SetEdge(*new_leaf, last);
+    new_leaf->data = std::move(leaf);
+
+    if (existing && existing->tag == ArtNodeTag::Leaf) {
+        // Replace: atomically swap, retire the old.
+        cur->children[slot].store(new_leaf, std::memory_order_release);
+        ArtNode* old = existing;
+        epochs_.Retire([old]() { delete old; });
+        return InsertResult::kReplaced;
+    }
+
+    // Brand new leaf.
+    cur->children[slot].store(new_leaf, std::memory_order_release);
+    leaf_count_.fetch_add(1, std::memory_order_relaxed);
     return InsertResult::kInserted;
 }
 
 bool ArtIndex::Remove(std::span<const ChunkHash> path) {
     if (path.empty()) return false;
-    std::unique_lock lk(mu_);
+    std::lock_guard lk(writer_mu_);
 
-    // Walk inner nodes; remember the parent of the final leaf so we can detach
-    // it. We do NOT prune empty inner chains in this MVP — periodic compaction
-    // is a separate concern (TODO(stephen): pruner).
     ArtInner256* cur = root_.get();
     for (std::size_t i = 0; i + 1 < path.size(); ++i) {
         const ChunkHash& h = path[i];
         const uint8_t slot = h[0];
-        auto& child = cur->children[slot];
+        ArtNode* child = cur->children[slot].load(std::memory_order_acquire);
         if (!child || !EdgeMatches(*child, h) ||
             child->tag != ArtNodeTag::Inner256) {
             return false;
         }
-        cur = static_cast<ArtInner256*>(child.get());
+        cur = static_cast<ArtInner256*>(child);
     }
+
     const ChunkHash& last = path.back();
     const uint8_t slot = last[0];
-    auto& tail = cur->children[slot];
+    ArtNode* tail = cur->children[slot].load(std::memory_order_acquire);
     if (!tail || !EdgeMatches(*tail, last) || tail->tag != ArtNodeTag::Leaf) {
         return false;
     }
-    tail.reset();
-    --leaf_count_;
+    cur->children[slot].store(nullptr, std::memory_order_release);
+    ArtNode* old = tail;
+    epochs_.Retire([old]() { delete old; });
+    leaf_count_.fetch_sub(1, std::memory_order_relaxed);
     return true;
 }
 
 ArtIndex::LookupResult ArtIndex::Lookup(std::span<const ChunkHash> path,
-                                        const ReaderGuard&) const {
+                                        const ReaderGuard& /*guard*/) const {
+    // Lock-free walk. The guard parameter exists only to make the lifetime
+    // contract explicit at the type level — the actual epoch publish was
+    // done by guard's constructor.
     LookupResult best{0, nullptr};
     if (path.empty()) return best;
 
@@ -180,16 +203,16 @@ ArtIndex::LookupResult ArtIndex::Lookup(std::span<const ChunkHash> path,
     for (std::size_t i = 0; i < path.size(); ++i) {
         const ChunkHash& h = path[i];
         const uint8_t slot = h[0];
-        const auto& child = cur->children[slot];
+        ArtNode* child = cur->children[slot].load(std::memory_order_acquire);
         if (!child || !EdgeMatches(*child, h)) break;
 
         if (child->tag == ArtNodeTag::Leaf) {
-            auto* lf = static_cast<ArtLeaf*>(child.get());
+            auto* lf = static_cast<const ArtLeaf*>(child);
             best.matched_chunks = i + 1;
             best.leaf           = lf->data.get();
-            break;  // leaves are terminal in this MVP
+            break;  // leaves terminal in MVP
         }
-        cur = static_cast<const ArtInner256*>(child.get());
+        cur = static_cast<const ArtInner256*>(child);
     }
     return best;
 }

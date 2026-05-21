@@ -12,6 +12,7 @@ set(NODE_CORE_SRCS
     src/tier/cold_tier.cpp
     # prefix
     src/prefix/art_index.cpp
+    src/prefix/epoch.cpp
     src/prefix/lpm.cpp
     src/prefix/refcount.cpp
     src/prefix/kv_event_stream.cpp

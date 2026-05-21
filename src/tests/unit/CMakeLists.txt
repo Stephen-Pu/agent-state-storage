@@ -11,6 +11,7 @@ set(KVCACHE_NODE_SRC ${CMAKE_SOURCE_DIR}/kvstore-node/src)
 # executable's link graph.
 set(NODE_PREFIX_SRCS
     ${KVCACHE_NODE_SRC}/prefix/art_index.cpp
+    ${KVCACHE_NODE_SRC}/prefix/epoch.cpp
     ${KVCACHE_NODE_SRC}/prefix/lpm.cpp
     ${KVCACHE_NODE_SRC}/prefix/kv_event_stream.cpp
     ${KVCACHE_NODE_SRC}/prefix/refcount.cpp
@@ -78,6 +79,8 @@ kvcache_add_test(test_refcount         prefix/refcount_test.cpp         ${NODE_P
 kvcache_add_test(test_event_stream     prefix/event_stream_test.cpp     ${NODE_PREFIX_SRCS})
 kvcache_add_test(test_art_index        prefix/art_index_test.cpp        ${NODE_PREFIX_SRCS})
 kvcache_add_test(test_lpm              prefix/lpm_test.cpp              ${NODE_PREFIX_SRCS})
+kvcache_add_test(test_epoch            prefix/epoch_test.cpp            ${NODE_PREFIX_SRCS})
+kvcache_add_test(test_art_concurrent   prefix/art_concurrent_test.cpp   ${NODE_PREFIX_SRCS})
 kvcache_add_test(test_rocksdb_store    meta/rocksdb_store_test.cpp      ${NODE_META_SRCS})
 if(KVCACHE_ENABLE_ROCKSDB)
     target_link_libraries(test_rocksdb_store PRIVATE RocksDB::rocksdb)
