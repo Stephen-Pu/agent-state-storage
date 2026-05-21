@@ -3,14 +3,15 @@
 //   - 64-bit model_id canonical hash       (LLD §3.1)
 //   - 64-bit content-addressed chunk keys  (LLD §3.4 / §3.2)
 //
-// Implementation: vendored upstream `BLAKE3` C reference (TODO: import as
-// third_party/blake3/). This facade keeps the rest of the codebase
-// implementation-agnostic.
+// Implementation: the official BLAKE3-team reference C library (1.5.x),
+// linked via the `BLAKE3::blake3` CMake target. This facade keeps the
+// downstream codebase free of the BLAKE3 C header.
 #pragma once
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <span>
 
 namespace kvcache::hash {
@@ -23,6 +24,8 @@ Digest256 Blake3_256(std::span<const uint8_t> data) noexcept;
 uint64_t  Blake3_64 (std::span<const uint8_t> data) noexcept;
 
 // Streaming variant for hashing token sequences without an extra copy.
+// Uses pImpl because the size of a `blake3_hasher` is large (~1.9 KiB) and
+// would pull the BLAKE3 C header into this public C++ header otherwise.
 class Hasher {
    public:
     Hasher();
@@ -35,7 +38,8 @@ class Hasher {
     Digest256 Finalize256() noexcept;
 
    private:
-    alignas(8) unsigned char state_[1920]; // sized to fit BLAKE3 reference state
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
 }  // namespace kvcache::hash

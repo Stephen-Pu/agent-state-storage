@@ -201,6 +201,9 @@ LLD section it implements.
 - 12 subsystems, 26 gtest binaries, 120 unit tests
 - In-process headless backend — the Python demo runs the **full LPM →
   fetch → tier promotion → seal → cross-request reuse** flow
+- **Real BLAKE3** (BLAKE3-team reference C library, vendored via
+  `FetchContent`) — used for prefix hashing, chunk identity, and HRW
+  routing weights
 - Real etcd integration (embedded etcd v3.5 in Go tests; via
   `IEtcdClient` abstraction in C++)
 - Real Helm chart that renders a deployable K8s manifest
@@ -208,8 +211,6 @@ LLD section it implements.
 
 **Honestly not done yet** (called out so nobody is misled):
 
-- BLAKE3 is a placeholder (FNV-1a + SplitMix64 finalizer). Real BLAKE3
-  must be vendored before production.
 - ART uses `std::shared_mutex` reads; needs epoch-based lock-free reads
   to hit the LLD §9.1 target of lookup p99 ≤ 10 µs.
 - Only the loopback NIXL backend exists; UCX / GDR / GDS / TCP backends

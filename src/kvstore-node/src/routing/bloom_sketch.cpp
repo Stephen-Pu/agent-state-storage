@@ -5,7 +5,7 @@
 #include <cmath>
 #include <cstring>
 
-#include "blake3.h"
+#include "b3_facade.h"
 
 namespace kvcache::node::routing {
 

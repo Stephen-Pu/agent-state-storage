@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <cstring>
 
-#include "blake3.h"  // kvcache::hash::Blake3_64 facade
+#include "b3_facade.h"  // kvcache::hash::Blake3_64 facade
 
 namespace kvcache::node::routing {
 

@@ -31,6 +31,16 @@ endif()
 
 add_compile_options(-Wall -Wextra -Wpedantic -Werror=return-type)
 
+# macOS-only: Homebrew often leaves /opt/homebrew/opt/llvm@*/lib on the
+# default library search path, which makes ld print "reexported library
+# ...libunwind.1.dylib couldn't be matched" warnings at every link step.
+# The warnings are cosmetic — links succeed, runtime is unaffected — so
+# we suppress link-time warnings on macOS. On Linux they stay on so real
+# issues remain visible.
+if(APPLE)
+    add_link_options("LINKER:-w")
+endif()
+
 option(KVCACHE_BUILD_TESTS    "Build unit tests"                 ON)
 option(KVCACHE_BUILD_NODE     "Build kvstore-node"               ON)
 option(KVCACHE_BUILD_AGENT    "Build kvagent sidecar"            ON)
@@ -42,6 +52,45 @@ option(KVCACHE_ENABLE_ROCKSDB "Link against RocksDB"             OFF)
 if(KVCACHE_ENABLE_ROCKSDB)
     find_package(RocksDB REQUIRED CONFIG)
     add_compile_definitions(KVCACHE_HAVE_ROCKSDB=1)
+endif()
+
+# --------------------------------------------------------------------------
+# BLAKE3 — real cryptographic hash (replaces the FNV-1a + SplitMix64 facade).
+# We prefer a system install (`find_package(BLAKE3 CONFIG)`) and fall back to
+# FetchContent pulling the official BLAKE3-team reference implementation.
+# Same pattern as gtest below; gives reproducible CI without requiring a
+# system package on a fresh Ubuntu image.
+# --------------------------------------------------------------------------
+find_package(BLAKE3 QUIET CONFIG)
+if(NOT BLAKE3_FOUND)
+    message(STATUS "BLAKE3 not found locally; fetching v1.5.4 via FetchContent")
+    include(FetchContent)
+    FetchContent_Declare(
+        blake3
+        GIT_REPOSITORY https://github.com/BLAKE3-team/BLAKE3.git
+        GIT_TAG        1.5.4
+        GIT_SHALLOW    TRUE
+        SOURCE_SUBDIR  c
+    )
+    set(BLAKE3_TESTING OFF CACHE BOOL "" FORCE)
+    # BLAKE3 1.5.4's c/CMakeLists.txt uses `cmake_minimum_required(VERSION 3.9)`.
+    # CMake 4.x prints a deprecation warning about VERSION < 3.10 — that's
+    # upstream's problem to fix, not ours. CMAKE_POLICY_VERSION_MINIMUM does
+    # NOT silence it (that variable only raises the floor for OLDER versions).
+    # The right knob is CMAKE_WARN_DEPRECATED: turn it off across the
+    # FetchContent_MakeAvailable call, restore immediately after.
+    set(CMAKE_WARN_DEPRECATED OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(blake3)
+    set(CMAKE_WARN_DEPRECATED ON CACHE BOOL "" FORCE)
+    if(NOT TARGET BLAKE3::blake3)
+        add_library(BLAKE3::blake3 ALIAS blake3)
+    endif()
+    # BLAKE3 1.5.4's blake3_dispatch.c declares get_cpu_features() inside an
+    # x86-only path but the call sites are gated by IS_X86; on ARM Mac the
+    # function is unused. Upstream bug; suppress locally.
+    if(TARGET blake3)
+        target_compile_options(blake3 PRIVATE -Wno-unused-function)
+    endif()
 endif()
 
 include_directories(${CMAKE_SOURCE_DIR}/include)

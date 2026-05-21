@@ -2,7 +2,7 @@
 
 add_library(kvcache_common STATIC
     locator.cpp
-    blake3.cpp
+    b3_facade.cpp        # BLAKE3 facade (real impl via BLAKE3::blake3)
     logging.cpp
     metrics.cpp
     hashing.cpp
@@ -14,5 +14,11 @@ target_include_directories(kvcache_common
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-# TODO(stephen): link spdlog, abseil, prometheus-cpp, and a vendored BLAKE3
-# implementation once dependencies are wired in.
+# BLAKE3 is consumed transitively by anything that links kvcache_common.
+target_link_libraries(kvcache_common
+    PUBLIC
+        BLAKE3::blake3
+)
+
+# TODO(stephen): link spdlog, abseil, prometheus-cpp once those deps are
+# wired in.
