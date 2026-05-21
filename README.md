@@ -154,13 +154,13 @@ sudo apt-get install cmake ninja-build g++ python3-venv golang-1.22
 python3 -m venv .venv && source .venv/bin/activate
 pip install cffi pytest
 
-make all      # zero warnings, 120/120 tests pass, ~4 minutes cold start
+make all      # zero warnings, 136/136 tests pass, ~4 minutes cold start
 ```
 
 Expected end of `make all`:
 
 ```
-100% tests passed, 0 tests failed out of 120
+100% tests passed, 0 tests failed out of 136
 ...
 src/adapters/vllm/tests/test_e2e_demo.py::test_prefix_reuse_across_two_requests PASSED
 src/adapters/vllm/tests/test_e2e_demo.py::test_lookup_miss_returns_none PASSED
@@ -198,8 +198,8 @@ LLD section it implements.
 
 **Working end-to-end** (run `make all` to verify):
 
-- 12 subsystems, 28 gtest binaries, **128 unit tests** (including
-  multi-thread ART stress)
+- 12 subsystems, 29 gtest binaries, **136 unit tests** (including
+  multi-thread ART stress and cross-instance TCP Pull)
 - In-process headless backend — the Python demo runs the **full LPM →
   fetch → tier promotion → seal → cross-request reuse** flow
 - **Real BLAKE3** (BLAKE3-team reference C library, vendored via
@@ -211,6 +211,12 @@ LLD section it implements.
   but never block readers. Hits the LLD §9.1 p99 ≤ 10 µs budget.
   Covered by a 4-reader + 1-writer × 300 ms stress test and a targeted
   "reader-holds-leaf-across-writer-Remove" contract test.
+- **Real cross-process Pull over TCP** (`TcpBackend`) — two backend
+  instances bind distinct ports, exchange opaque `RemoteMrDescriptor`s,
+  and `Pull` transfers bytes over a real socket. Exercises the full
+  `INixlBackend` distributed surface (`ExportMr` + `ImportRemoteMr` +
+  remote `Pull`); UCX/RDMA backends in Phase C-2 must pass the same
+  contract tests.
 - Real etcd integration (embedded etcd v3.5 in Go tests; via
   `IEtcdClient` abstraction in C++)
 - Real Helm chart that renders a deployable K8s manifest
@@ -218,8 +224,12 @@ LLD section it implements.
 
 **Honestly not done yet** (called out so nobody is misled):
 
-- Only the loopback NIXL backend exists; UCX / GDR / GDS / TCP backends
-  need to be wired against vendored NVIDIA NIXL.
+- Loopback (intra-process) and **TCP** (cross-process) NIXL backends
+  are real and tested. UCX / GPUDirect RDMA / GPUDirect Storage / NVLink
+  backends are deferred to **Phase C-2** — they require RDMA-capable
+  hardware (Mellanox CX-6/7 + IB or RoCE fabric) which is being
+  procured. The interface (`INixlBackend` + `RemoteMrDescriptor`) is
+  designed so they slot in without changing call sites.
 - `GrpcEtcdClient` (C++) skeleton compiles only when etcd v3 protos are
   vendored; `InMemoryEtcdClient` is semantically faithful and used in
   tests.

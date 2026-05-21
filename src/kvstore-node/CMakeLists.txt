@@ -22,6 +22,7 @@ set(NODE_CORE_SRCS
     src/ingest/seal.cpp
     # transport
     src/transport/nixl_wrapper.cpp
+    src/transport/tcp_backend.cpp
     src/transport/priority_scheduler.cpp
     # meta
     src/meta/rocksdb_store.cpp

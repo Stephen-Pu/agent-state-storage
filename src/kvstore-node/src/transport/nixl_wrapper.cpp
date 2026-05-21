@@ -5,8 +5,9 @@
 //   * Single-process integration tests.
 //   * Bring-up on dev laptops.
 //
-// Real backends (UCX, GDR, NVMe-oF, NVLink, TCP) plug in behind INixlBackend.
-// They are TODO and selected by name via CreateBackend.
+// Real cross-process / cross-node transfers go through `TcpBackend` (see
+// transport/tcp_backend.{h,cpp}). RDMA backends (UCX, GDR, GDS, NVLink)
+// plug in behind the same INixlBackend interface once hardware is wired.
 #include "transport/nixl_wrapper.h"
 
 #include <atomic>
@@ -14,10 +15,12 @@
 #include <mutex>
 #include <unordered_map>
 
+#include "transport/tcp_backend.h"
+
 namespace kvcache::node::transport {
 
 // ---------------------------------------------------------------------------
-// LoopbackBackend
+// LoopbackBackend — intra-process memcpy backend.
 // ---------------------------------------------------------------------------
 
 class LoopbackBackend final : public INixlBackend {
@@ -49,6 +52,45 @@ class LoopbackBackend final : public INixlBackend {
         return true;
     }
 
+    // Loopback is intra-process by definition: an "exported" descriptor is
+    // really just a local-mr handle that the same process can re-import.
+    // Useful mostly so tests of the abstract interface exercise both
+    // methods without needing the TCP backend.
+    bool ExportMr(MrKey local_key,
+                  RemoteMrDescriptor* out_desc,
+                  std::string* err) override {
+        if (!out_desc) { if (err) *err = "loopback: out_desc is null"; return false; }
+        std::lock_guard lk(mu_);
+        auto it = regions_.find(local_key);
+        if (it == regions_.end()) {
+            if (err) *err = "loopback: unknown MR key";
+            return false;
+        }
+        // Encode: 4-byte MrKey + 8-byte bytes (host-endian; intra-process).
+        out_desc->opaque.resize(sizeof(MrKey) + sizeof(std::size_t));
+        std::memcpy(out_desc->opaque.data(), &local_key, sizeof(MrKey));
+        std::memcpy(out_desc->opaque.data() + sizeof(MrKey),
+                    &it->second.bytes, sizeof(std::size_t));
+        return true;
+    }
+
+    MrKey ImportRemoteMr(const RemoteMrDescriptor& desc, std::string* err) override {
+        if (desc.opaque.size() != sizeof(MrKey) + sizeof(std::size_t)) {
+            if (err) *err = "loopback: malformed descriptor";
+            return kInvalidMrKey;
+        }
+        MrKey peer_key = 0;
+        std::memcpy(&peer_key, desc.opaque.data(), sizeof(MrKey));
+        std::lock_guard lk(mu_);
+        // Within the same process the imported key IS the local key (since
+        // both ends share `regions_`). For cross-process work use TcpBackend.
+        if (regions_.find(peer_key) == regions_.end()) {
+            if (err) *err = "loopback: imported MR not present locally";
+            return kInvalidMrKey;
+        }
+        return peer_key;
+    }
+
     CompletionId Pull(const PullRequest& req, std::string* err) override {
         void *src_addr = nullptr, *dst_addr = nullptr;
         std::size_t src_n = 0, dst_n = 0;
@@ -70,8 +112,6 @@ class LoopbackBackend final : public INixlBackend {
         std::memcpy(static_cast<uint8_t*>(dst_addr) + req.dst_off,
                     static_cast<uint8_t*>(src_addr) + req.src_off,
                     req.bytes);
-        // Synchronously completed; the completion id is purely a token so
-        // callers can mirror the async path on real backends.
         return next_completion_.fetch_add(1, std::memory_order_relaxed);
     }
 
@@ -99,12 +139,14 @@ std::unique_ptr<INixlBackend> CreateBackend(const BackendOptions& opts, std::str
     if (opts.name == "loopback") {
         return std::make_unique<LoopbackBackend>();
     }
-    // TODO(stephen): plug in real backends:
-    //   "ucx"   — UCX over IB / RoCE (LLD §3.5, D-NET-1)
-    //   "gdr"   — GPUDirect RDMA
-    //   "gds"   — GPUDirect Storage (NVMe → GPU direct, LLD §3.3 T3)
-    //   "tcp"   — plain TCP fallback
-    //   "nvlink"— intra-host NVLink fabric
+    if (opts.name == "tcp") {
+        return CreateTcpBackend(opts, err);
+    }
+    // Real RDMA backends plug in behind this same interface:
+    //   "ucx"   — UCX over IB / RoCE (LLD §3.5, D-NET-1) — Phase C-2
+    //   "gdr"   — GPUDirect RDMA — Phase C-2
+    //   "gds"   — GPUDirect Storage (NVMe → GPU direct, LLD §3.3 T3) — Phase C-2
+    //   "nvlink"— intra-host NVLink fabric — Phase C-2
     if (err) *err = "nixl: unknown backend '" + opts.name + "'";
     return nullptr;
 }

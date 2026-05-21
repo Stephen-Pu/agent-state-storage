@@ -37,6 +37,7 @@ set(NODE_INGEST_SRCS
 
 set(NODE_TRANSPORT_SRCS
     ${KVCACHE_NODE_SRC}/transport/nixl_wrapper.cpp
+    ${KVCACHE_NODE_SRC}/transport/tcp_backend.cpp
     ${KVCACHE_NODE_SRC}/transport/priority_scheduler.cpp
 )
 
@@ -109,6 +110,7 @@ endif()
 
 kvcache_add_test(test_nixl_wrapper      transport/nixl_wrapper_test.cpp      ${NODE_TRANSPORT_SRCS})
 kvcache_add_test(test_priority_scheduler transport/priority_scheduler_test.cpp ${NODE_TRANSPORT_SRCS})
+kvcache_add_test(test_tcp_backend       transport/tcp_backend_test.cpp       ${NODE_TRANSPORT_SRCS})
 
 kvcache_add_test(test_etcd_client       cluster/etcd_client_test.cpp         ${NODE_CLUSTER_SRCS})
 kvcache_add_test(test_membership_fsm    cluster/membership_fsm_test.cpp      ${NODE_CLUSTER_SRCS})
