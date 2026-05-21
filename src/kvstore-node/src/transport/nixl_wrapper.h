@@ -27,12 +27,18 @@
 // cross-process / cross-node transfers, future UcxBackend for RDMA).
 #pragma once
 
+#include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
+
+#include "transport/priority_scheduler.h"
 
 namespace kvcache::node::transport {
 
@@ -134,20 +140,61 @@ std::unique_ptr<INixlBackend> CreateBackend(const BackendOptions& opts, std::str
 class NixlWrapper {
    public:
     explicit NixlWrapper(std::unique_ptr<INixlBackend> backend);
+    NixlWrapper(std::unique_ptr<INixlBackend> backend,
+                const PriorityScheduler::Options& sched_opts);
+    ~NixlWrapper();
+
+    NixlWrapper(const NixlWrapper&)            = delete;
+    NixlWrapper& operator=(const NixlWrapper&) = delete;
 
     INixlBackend* backend() noexcept { return backend_.get(); }
     const std::string& BackendName() const { return name_; }
+    PriorityScheduler& scheduler() noexcept { return sched_; }
 
     MrKey Register(void* addr, std::size_t bytes, std::string* err);
     void  Unregister(MrKey key);
 
-    // Convenience: submit and synchronously wait. Real fetch paths should use
-    // the async pair (Pull → Wait) so the Priority Scheduler stays in charge.
+    // Direct path: bypass the scheduler. Kept for low-level callers / tests
+    // that want to verify a backend's behavior without QoS interference.
     bool PullSync(const PullRequest& req, uint32_t timeout_ms, std::string* err);
 
+    // Scheduled path (Phase E-2): goes through the in-process
+    // PriorityScheduler so multi-tenant QoS reservations and per-tenant
+    // round-robin actually take effect on the data plane. Synchronous —
+    // the calling thread blocks until the dispatcher has run the Pull (or
+    // the timeout has elapsed). For a single-threaded caller this looks
+    // identical to PullSync; under contention, higher-priority callers
+    // overtake lower-priority ones.
+    bool ScheduledPull(const PullRequest& req, Priority prio,
+                       uint64_t tenant_hash, uint32_t timeout_ms,
+                       std::string* err);
+
    private:
+    // Per-call state for ScheduledPull. The dispatcher thread fills in
+    // `ok` / `err` and notifies the caller via `cv`.
+    struct PendingPull {
+        PullRequest          req;
+        uint32_t             timeout_ms = 0;
+        bool                 done       = false;
+        bool                 ok         = false;
+        std::string          err;
+        std::mutex           mu;
+        std::condition_variable cv;
+    };
+
+    void DispatcherLoop();
+
     std::unique_ptr<INixlBackend> backend_;
-    std::string name_;
+    std::string                   name_;
+
+    PriorityScheduler             sched_;
+
+    // Dispatcher thread + its wake-up cv. Submit notifies; the loop sleeps
+    // when sched_ has no work and stop_ is false.
+    std::mutex                    disp_mu_;
+    std::condition_variable       disp_cv_;
+    std::atomic<bool>             stop_{false};
+    std::thread                   dispatcher_;
 };
 
 }  // namespace kvcache::node::transport

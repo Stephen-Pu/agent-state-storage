@@ -108,7 +108,6 @@ class HeadlessNode {
     std::unique_ptr<node::prefix::ArtIndex>            art_;
     std::unique_ptr<node::prefix::EventStream>         events_;
     std::unique_ptr<node::transport::NixlWrapper>      nixl_;
-    std::unique_ptr<node::transport::PriorityScheduler> sched_;
 };
 
 }  // namespace kvcache::abi

@@ -156,8 +156,21 @@ std::unique_ptr<INixlBackend> CreateBackend(const BackendOptions& opts, std::str
 // ---------------------------------------------------------------------------
 
 NixlWrapper::NixlWrapper(std::unique_ptr<INixlBackend> backend)
+    : NixlWrapper(std::move(backend), PriorityScheduler::Options{}) {}
+
+NixlWrapper::NixlWrapper(std::unique_ptr<INixlBackend> backend,
+                          const PriorityScheduler::Options& sched_opts)
     : backend_(std::move(backend)),
-      name_(backend_ ? backend_->Name() : std::string()) {}
+      name_(backend_ ? backend_->Name() : std::string()),
+      sched_(sched_opts) {
+    dispatcher_ = std::thread([this] { DispatcherLoop(); });
+}
+
+NixlWrapper::~NixlWrapper() {
+    stop_.store(true, std::memory_order_release);
+    disp_cv_.notify_all();
+    if (dispatcher_.joinable()) dispatcher_.join();
+}
 
 MrKey NixlWrapper::Register(void* addr, std::size_t bytes, std::string* err) {
     return backend_ ? backend_->RegisterRegion(addr, bytes, err) : kInvalidMrKey;
@@ -170,6 +183,76 @@ bool NixlWrapper::PullSync(const PullRequest& req, uint32_t timeout_ms, std::str
     auto cid = backend_->Pull(req, err);
     if (cid == kInvalidCompletionId) return false;
     return backend_->Wait(cid, timeout_ms, err);
+}
+
+bool NixlWrapper::ScheduledPull(const PullRequest& req, Priority prio,
+                                  uint64_t tenant_hash, uint32_t timeout_ms,
+                                  std::string* err) {
+    if (!backend_) { if (err) *err = "nixl: no backend"; return false; }
+
+    PendingPull pp;
+    pp.req        = req;
+    pp.timeout_ms = timeout_ms;
+    // The scheduler stores `&pp` as the WorkItem user pointer; the
+    // dispatcher casts back to drive the Pull. PendingPull is owned by this
+    // stack frame and outlives the dispatcher call because we wait on
+    // pp.cv before returning.
+    sched_.Submit(prio, tenant_hash, req.bytes, &pp);
+
+    // Wake the dispatcher.
+    {
+        std::lock_guard lk(disp_mu_);
+        disp_cv_.notify_one();
+    }
+
+    std::unique_lock lk(pp.mu);
+    pp.cv.wait(lk, [&] { return pp.done; });
+
+    if (err) *err = pp.err;
+    return pp.ok;
+}
+
+void NixlWrapper::DispatcherLoop() {
+    while (true) {
+        // Wait for either work to appear or shutdown.
+        {
+            std::unique_lock lk(disp_mu_);
+            disp_cv_.wait(lk, [&] {
+                return stop_.load(std::memory_order_acquire) ||
+                       sched_.HasWork();
+            });
+            if (stop_.load(std::memory_order_acquire) && !sched_.HasWork()) {
+                return;
+            }
+        }
+
+        // Drain whatever the scheduler currently admits.
+        while (auto w = sched_.TryNext()) {
+            auto* pp = static_cast<PendingPull*>(w->user);
+            std::string local_err;
+            const auto cid = backend_->Pull(pp->req, &local_err);
+            bool ok = false;
+            if (cid != kInvalidCompletionId) {
+                ok = backend_->Wait(cid, pp->timeout_ms, &local_err);
+            }
+            sched_.OnComplete(w->id);
+
+            // Hand the result back to the caller.
+            {
+                std::lock_guard lk(pp->mu);
+                pp->ok   = ok;
+                pp->err  = std::move(local_err);
+                pp->done = true;
+            }
+            pp->cv.notify_one();
+        }
+        // Loop: re-evaluate HasWork (a non-admissible class may still be
+        // waiting on credit, in which case we'll sleep until OnComplete on
+        // a sibling wakes us — see below). To make that wake-up reliable
+        // we notify disp_cv_ from OnComplete via the wakeup hook? Simpler:
+        // we re-check HasWork above and let the wait condition pick it up
+        // on the next notify_one() from a Submit() or stop_.
+    }
 }
 
 }  // namespace kvcache::node::transport

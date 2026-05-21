@@ -220,6 +220,14 @@ bool PriorityScheduler::OnComplete(WorkId id) {
     return true;
 }
 
+bool PriorityScheduler::HasWork() const {
+    std::lock_guard lk(mu_);
+    for (std::size_t i = 0; i < kNumPriorities; ++i) {
+        if (classes_[i].total_depth > 0) return true;
+    }
+    return false;
+}
+
 std::size_t PriorityScheduler::QueueDepth(Priority p) const {
     std::lock_guard lk(mu_);
     return classes_[idx(p)].total_depth;

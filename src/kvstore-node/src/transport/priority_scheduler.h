@@ -99,6 +99,11 @@ class PriorityScheduler {
     // TryNext() return. Returns false if the WorkId is unknown.
     bool OnComplete(WorkId id);
 
+    // True iff some class has at least one queued work item. Cheap O(K)
+    // (K=3) scan under the scheduler mutex. Used by drivers that want to
+    // wait for arriving work before polling TryNext.
+    bool HasWork() const;
+
     // ---- stats (point-in-time snapshots) ----
     std::size_t QueueDepth   (Priority p) const;
     uint64_t    InFlightBytes(Priority p) const;

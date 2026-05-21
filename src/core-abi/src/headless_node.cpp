@@ -92,10 +92,11 @@ bool HeadlessNode::Init(const Options& opts, std::string* err) {
     bo2.name = opts.nixl_backend;
     auto backend = node::transport::CreateBackend(bo2, err);
     if (!backend) return false;
+    // The PriorityScheduler now lives inside NixlWrapper (Phase E-2). The
+    // wrapper's dispatcher thread is the single point where Pulls are
+    // issued, so admission decisions made by the scheduler actually
+    // throttle the data plane.
     nixl_ = std::make_unique<node::transport::NixlWrapper>(std::move(backend));
-
-    node::transport::PriorityScheduler::Options so;
-    sched_ = std::make_unique<node::transport::PriorityScheduler>(so);
     return true;
 }
 
@@ -211,7 +212,13 @@ int HeadlessNode::Fetch(kv_handle_t handle,
         dst_mr == node::transport::kInvalidMrKey) return KV_E_TRANSPORT;
 
     node::transport::PullRequest req{dst_mr, 0, src_mr, 0, f.data.size()};
-    if (!nixl_->PullSync(req, 5000, &err)) {
+    // Tenant hashing for Fetch traffic isn't wired through yet (the C ABI
+    // entry doesn't carry tenant context here). Phase E-3 will pull the
+    // tenant UUID from the kv_ctx_t; for now we use the system bucket and
+    // submit at P1 — the default class for ordinary Fetch.
+    if (!nixl_->ScheduledPull(req, node::transport::Priority::P1,
+                                node::transport::kSystemTenantHash,
+                                5000, &err)) {
         nixl_->Unregister(src_mr);
         nixl_->Unregister(dst_mr);
         return KV_E_TRANSPORT;

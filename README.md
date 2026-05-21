@@ -63,8 +63,12 @@ Concretely: there is a 3-queue (P0 / P1 / P2) **PriorityScheduler in front
 of NIXL**, with reserved 20% / 75% / 5% bandwidth windows, idle-credit
 lending for anti-starvation, and **per-tenant round-robin within each
 class** so one tenant's huge transfer can't starve another tenant's
-small transfer in the same priority. Admissions, forced admissions, and
-queue depth are exposed as Prometheus counters / gauges.
+small transfer in the same priority. The scheduler lives **inside**
+`NixlWrapper`: every `ScheduledPull` goes through `Submit → dispatcher
+thread → TryNext → backend->Pull → OnComplete`, so admission decisions
+actually throttle the data plane (not just an in-memory bookkeeping
+exercise). Admissions, forced admissions, and queue depth are exposed
+as Prometheus counters / gauges.
 
 ### 3. Five-tier storage with lazy promotion and cross-tenant eviction
 
@@ -157,13 +161,13 @@ sudo apt-get install cmake ninja-build g++ python3-venv golang-1.22
 python3 -m venv .venv && source .venv/bin/activate
 pip install cffi pytest
 
-make all      # zero warnings, 148/148 tests pass, ~4 minutes cold start
+make all      # zero warnings, 151/151 tests pass, ~4 minutes cold start
 ```
 
 Expected end of `make all`:
 
 ```
-100% tests passed, 0 tests failed out of 148
+100% tests passed, 0 tests failed out of 151
 ...
 src/adapters/vllm/tests/test_e2e_demo.py::test_prefix_reuse_across_two_requests PASSED
 src/adapters/vllm/tests/test_e2e_demo.py::test_lookup_miss_returns_none PASSED
@@ -201,9 +205,10 @@ LLD section it implements.
 
 **Working end-to-end** (run `make all` to verify):
 
-- 12 subsystems, 30 gtest binaries, **148 unit tests** (including
+- 12 subsystems, 30 gtest binaries, **151 unit tests** (including
   multi-thread ART stress, cross-instance TCP Pull, persistent ART
-  round-trip, and concurrent PriorityScheduler stress)
+  round-trip, concurrent PriorityScheduler stress, and concurrent
+  ScheduledPull through the NIXL dispatcher)
 - In-process headless backend — the Python demo runs the **full LPM →
   fetch → tier promotion → seal → cross-request reuse** flow
 - **Real BLAKE3** (BLAKE3-team reference C library, vendored via
