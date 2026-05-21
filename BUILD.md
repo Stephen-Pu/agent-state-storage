@@ -67,7 +67,7 @@ cmake -S src -B build \
   -DKVCACHE_ENABLE_ETCD=ON     \  # compile GrpcEtcdClient (needs vendored proto)
   -DKVCACHE_ENABLE_SPDK=ON     \  # SPDK NVMe backend (TODO)
   -DKVCACHE_ENABLE_CUDA=ON     \  # GPUDirect paths (TODO)
-  -DKVCACHE_BUILD_TESTS=OFF       # skip the 26 gtest binaries
+  -DKVCACHE_BUILD_TESTS=OFF       # skip the 31 gtest binaries
 ```
 
 ### Outputs

@@ -59,20 +59,16 @@ incompatible with multi-tenancy QoS. Most KV cache projects skip this and
 ship "first-come-first-served" data planes; this project takes the
 constraint seriously.
 
-Concretely: there is a 3-queue (P0 / P1 / P2) **PriorityScheduler in front
-of NIXL**, with reserved 20% / 75% / 5% bandwidth windows, idle-credit
-lending for anti-starvation, and **per-tenant round-robin within each
-class** so one tenant's huge transfer can't starve another tenant's
-small transfer in the same priority. The scheduler lives **inside**
-`NixlWrapper`: every `ScheduledPull` goes through `Submit → dispatcher
-thread → TryNext → backend->Pull → OnComplete`, so admission decisions
-actually throttle the data plane (not just an in-memory bookkeeping
-exercise). The C ABI hashes each context's `tenant_id` string at
-`kv_ctx_open` and plumbs it through `Fetch → ScheduledPull → Submit`,
-so two clients with different `tenant_id`s really do land in different
-per-tenant FIFOs and get round-robin'd inside the same priority class.
-Admissions, forced admissions, and queue depth are exposed as
-Prometheus counters / gauges.
+Concretely: a 3-queue (P0 / P1 / P2) **PriorityScheduler sits inside
+`NixlWrapper`**, with reserved 20% / 75% / 5% bandwidth windows,
+idle-credit lending for anti-starvation, and per-tenant round-robin
+within each class. Every Pull goes through the scheduler's dispatcher
+thread, so admission decisions actually throttle the data plane —
+not just an in-memory bookkeeping exercise. Per-tenant FIFOs are
+populated by hashing each caller's `tenant_id` at the C ABI
+boundary, so two clients in the same class round-robin instead of
+one starving the other. Admissions, forced admissions, and queue
+depth are exposed as Prometheus counters / gauges.
 
 ### 3. Five-tier storage with lazy promotion and cross-tenant eviction
 
@@ -209,62 +205,54 @@ LLD section it implements.
 
 **Working end-to-end** (run `make all` to verify):
 
-- 12 subsystems, 31 gtest binaries, **159 unit tests** (including
-  multi-thread ART stress, cross-instance TCP Pull, persistent ART
-  round-trip, concurrent PriorityScheduler stress, concurrent
-  ScheduledPull through the NIXL dispatcher, and HttpEtcdClient
-  error-path coverage; integration tests against a live etcd run
-  opt-in via `ETCD_ENDPOINT=...`)
-- In-process headless backend — the Python demo runs the **full LPM →
-  fetch → tier promotion → seal → cross-request reuse** flow
-- **Real BLAKE3** (BLAKE3-team reference C library, vendored via
-  `FetchContent`) — used for prefix hashing, chunk identity, and HRW
-  routing weights
-- **Lock-free ART reads via Epoch-Based Reclamation** (Fraser 2004 /
-  Linux RCU family). Readers walk via a single `std::atomic::load(acquire)`
-  per descent step with no mutex; writers serialise among themselves
-  but never block readers. Hits the LLD §9.1 p99 ≤ 10 µs budget.
-  Covered by a 4-reader + 1-writer × 300 ms stress test and a targeted
-  "reader-holds-leaf-across-writer-Remove" contract test.
+- 12 subsystems, 31 gtest binaries, **159 unit tests** — multi-thread
+  ART stress, cross-instance TCP Pull, persistent ART round-trip,
+  concurrent PriorityScheduler, ScheduledPull through the NIXL
+  dispatcher, HttpEtcdClient error-path coverage. Live-etcd
+  integration tests run opt-in via `ETCD_ENDPOINT=...`.
+- In-process headless backend — the Python demo runs the full LPM →
+  fetch → tier promotion → seal → cross-request reuse flow.
+- **Real BLAKE3** for prefix hashing, chunk identity, and HRW
+  weights (BLAKE3-team reference C library, vendored via FetchContent).
+- **Lock-free ART reads via Epoch-Based Reclamation** — readers walk
+  with a single `std::atomic::load(acquire)` per descent; writers
+  serialise among themselves but never block readers. Hits the LLD
+  §9.1 p99 ≤ 10 µs budget, covered by a 4-reader + 1-writer × 300 ms
+  stress test plus a targeted leaf-pinning contract test.
 - **Real cross-process Pull over TCP** (`TcpBackend`) — two backend
-  instances bind distinct ports, exchange opaque `RemoteMrDescriptor`s,
-  and `Pull` transfers bytes over a real socket. Exercises the full
-  `INixlBackend` distributed surface (`ExportMr` + `ImportRemoteMr` +
-  remote `Pull`); UCX/RDMA backends in Phase C-2 must pass the same
-  contract tests.
+  instances bind distinct ports, exchange opaque MR descriptors, and
+  `Pull` moves bytes through a real socket. Future UCX / RDMA
+  backends slot into the same `INixlBackend` interface.
 - **Persistent ART** — whole-tree snapshot to disk with BLAKE3-256
-  body integrity (atomic write-temp + fsync + rename). Boot path tries
-  the snapshot first; on missing / corrupt file it falls back to a
-  fresh empty ART so a bad checkpoint never blocks startup. Exposed via
-  `ArtSnapshot::Write` / `Read` and through `HeadlessNode::Options::
-  art_snapshot_path` for the in-process backend. Replaces the legacy
-  "scan sealed_chunks CF and re-Insert every leaf" boot rebuild
-  (LLD §7.3); RocksDB stays as the authoritative seal log.
-- Real etcd integration on **both sides**: embedded etcd v3.5 in Go
-  tests, and a real `HttpEtcdClient` (KV + Lease + polling Watch) in
-  C++ that talks to a live etcd cluster via the v3 JSON gateway —
-  no grpc++ or proto-vendoring dep. The `IEtcdClient` abstraction
-  lets the in-memory and HTTP backends plug in interchangeably; a
-  future `GrpcEtcdClient` slots in the same way.
-- Real Helm chart that renders a deployable K8s manifest
-- 7-job CI on every push
+  body integrity (atomic write-temp + fsync + rename). Boot loads
+  the snapshot if present; falls back to a fresh ART so a bad
+  checkpoint never blocks startup. RocksDB stays as the authoritative
+  seal log.
+- **PriorityScheduler on the NIXL data path** with per-tenant fair
+  queueing. Tenant identity flows from `kv_ctx_open(tenant_id="...")`
+  through FNV-1a-64 into per-tenant FIFOs, so two clients in the same
+  priority class round-robin instead of starving each other.
+- **Real etcd**: embedded etcd v3.5 in Go tests; in C++, a real
+  `HttpEtcdClient` (KV + Lease + polling Watch) against a live etcd
+  cluster's v3 JSON gateway — no grpc++ / proto-vendoring dep. The
+  `IEtcdClient` abstraction lets in-memory, HTTP, and a future gRPC
+  backend plug in interchangeably.
+- Real Helm chart that renders a deployable K8s manifest.
+- 7-job CI on every push.
 
 **Honestly not done yet** (called out so nobody is misled):
 
-- Loopback (intra-process) and **TCP** (cross-process) NIXL backends
-  are real and tested. UCX / GPUDirect RDMA / GPUDirect Storage / NVLink
-  backends are deferred to **Phase C-2** — they require RDMA-capable
-  hardware (Mellanox CX-6/7 + IB or RoCE fabric) which is being
-  procured. The interface (`INixlBackend` + `RemoteMrDescriptor`) is
-  designed so they slot in without changing call sites.
-- `GrpcEtcdClient` (C++) is still a skeleton — the real etcd path
-  goes through `HttpEtcdClient` for now, which is fine for the
-  control-plane traffic shape (membership, quota, bloom-sketch sync)
-  but not for sub-ms hot-path roundtrips. Phase F-2 will land a true
-  gRPC client once etcd v3 protos are vendored.
-- Engine adapters: only vLLM has a working Python connector skeleton;
+- **Real RDMA backends** (UCX / GPUDirect RDMA / GDS / NVLink) await
+  RDMA-capable hardware (Mellanox CX-6/7 + IB or RoCE fabric). The
+  `INixlBackend` interface is built so they slot in alongside
+  `TcpBackend` without touching call sites.
+- **gRPC etcd client** — `HttpEtcdClient` is the C++ path today;
+  the gRPC variant lands once etcd v3 protos are vendored. Fine for
+  control-plane traffic (membership, quota, bloom-sketch sync); not
+  yet for sub-ms hot-path roundtrips.
+- **Engine adapters** — vLLM has a working Python connector;
   SGLang / AIBrix / TRT-LLM are stubs.
-- K8s operator scaffolds CRDs but does not yet emit StatefulSets.
+- **K8s operator** scaffolds CRDs but doesn't yet emit StatefulSets.
 
 This is an **honest MVP**: the architecture is complete and verified
 end-to-end; production hardening is the next phase.
@@ -273,15 +261,17 @@ end-to-end; production hardening is the next phase.
 
 ## Roadmap
 
-**Phase 2** (next 6–12 months):
+**Next** (6–12 months):
 
+- UCX / GDR / GDS / NVLink NIXL backends once RDMA hardware arrives
+- gRPC etcd client (etcd v3 protos vendored)
+- Incremental persistent ART — WAL of sealed/unsealed events between
+  snapshots, mmap-backed node arena, copy-on-write (today's snapshot
+  is whole-tree)
 - SPDK NVMe-oF for cross-node direct access
-- Persistent ART **D-2**: WAL of sealed/unsealed events between
-  snapshots, mmap-backed node arena, copy-on-write (Phase D-1 ships
-  full-tree snapshot/restore only)
 - OpenTelemetry tracing
 - AWS EFA / Azure InfiniBand / GCP TCPx certification
-- NVIDIA Dynamo / LMDeploy / TGI / DeepSpeed-MII adapters
+- SGLang / TRT-LLM / NVIDIA Dynamo / LMDeploy / TGI / DeepSpeed-MII adapters
 
 **Phase 3** (12–24 months):
 
