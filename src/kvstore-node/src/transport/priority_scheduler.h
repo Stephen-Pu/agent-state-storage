@@ -19,6 +19,13 @@
 //   it would otherwise exceed its reservation. This bounds tail latency for
 //   P2 when P0/P1 are saturating the link.
 //
+// Per-tenant fairness within a class (Phase E-1):
+//   Each class holds one FIFO per `tenant_hash` and visits tenants in a
+//   round-robin order. `TryNext` is work-conserving: if the current tenant's
+//   head-of-queue item is too big to admit, the scheduler tries the next
+//   tenant's head before giving up on the class. This stops one tenant's
+//   huge transfer from starving smaller transfers in the same class.
+//
 // The scheduler does NOT own threads. Callers submit work and then drive
 // TryNext() in their own dispatch loop. This keeps the scheduler easy to
 // reason about and easy to test.
@@ -47,11 +54,17 @@ enum class Priority : uint8_t {
 
 inline constexpr std::size_t kNumPriorities = 3;
 
+// Conventional "no tenant / system traffic" hash. Submit overloads without an
+// explicit tenant fall back to this; tests written before Phase E-1 keep
+// working unchanged because every Submit collapses to the same bucket.
+inline constexpr uint64_t kSystemTenantHash = 0;
+
 struct WorkItem {
     WorkId   id;
     Priority priority;
-    uint64_t bytes;     // size of the upcoming Pull
-    void*    user;      // opaque caller payload (FetchRequest pointer, etc.)
+    uint64_t bytes;        // size of the upcoming Pull
+    uint64_t tenant_hash;  // 16-byte UUID hashed to u64; 0 = system
+    void*    user;         // opaque caller payload (FetchRequest pointer, etc.)
 };
 
 class PriorityScheduler {
@@ -70,7 +83,12 @@ class PriorityScheduler {
 
     // Enqueue work and return its id. Always succeeds (queues are unbounded
     // here — the qos/ layer enforces per-tenant queue depth caps).
+    //
+    // The 3-arg overload preserves the pre-Phase-E-1 API; it bundles all
+    // traffic under `kSystemTenantHash`. New callers should pass the tenant
+    // hash explicitly so per-tenant fairness kicks in.
     WorkId Submit(Priority p, uint64_t bytes, void* user);
+    WorkId Submit(Priority p, uint64_t tenant_hash, uint64_t bytes, void* user);
 
     // Return the next admissible work item, or std::nullopt if no class is
     // admissible. Caller is expected to hand the result to the NIXL backend
@@ -81,17 +99,34 @@ class PriorityScheduler {
     // TryNext() return. Returns false if the WorkId is unknown.
     bool OnComplete(WorkId id);
 
-    // ---- stats ----
-    std::size_t QueueDepth (Priority p) const;
+    // ---- stats (point-in-time snapshots) ----
+    std::size_t QueueDepth   (Priority p) const;
     uint64_t    InFlightBytes(Priority p) const;
-    uint64_t    Reserved(Priority p) const noexcept { return reserved_[idx(p)]; }
-    uint64_t    Skips(Priority p) const;
+    uint64_t    Reserved     (Priority p) const noexcept {
+        return reserved_[idx(p)];
+    }
+    uint64_t    Skips        (Priority p) const;
+    // Number of tenants currently holding queued work in `p`.
+    std::size_t TenantCount  (Priority p) const;
+    // Total forced admissions across all classes since construction.
+    uint64_t    ForcedAdmissions() const noexcept {
+        return forced_admissions_.load(std::memory_order_relaxed);
+    }
+    // Total admissions across all classes (excluding starvation overrides).
+    uint64_t    NormalAdmissions() const noexcept {
+        return normal_admissions_.load(std::memory_order_relaxed);
+    }
 
    private:
     struct Class {
-        std::deque<WorkItem> queue;
-        uint64_t             in_flight = 0;
-        uint64_t             reservation = 0;
+        // One FIFO per tenant_hash + a round-robin order of tenants that
+        // currently hold work. `rr_order.front()` is the tenant whose head
+        // item TryNext considers first.
+        std::unordered_map<uint64_t, std::deque<WorkItem>> tenant_queues;
+        std::deque<uint64_t> rr_order;
+        std::size_t          total_depth       = 0;
+        uint64_t             in_flight         = 0;
+        uint64_t             reservation       = 0;
         uint32_t             consecutive_skips = 0;
     };
 
@@ -103,6 +138,12 @@ class PriorityScheduler {
     // starvation watchdog. Caller holds mu_.
     bool AdmissibleLocked(const Class& c, const WorkItem& w) const;
 
+    // Try to dequeue from class `c` under per-tenant round-robin, work-
+    // conserving on per-item admission failures. Returns the dequeued item
+    // (and increments c.in_flight); or nullopt if the class is skipped
+    // (and bumps c.consecutive_skips). Caller holds mu_.
+    std::optional<WorkItem> TryDequeueClassLocked(Class& c);
+
     mutable std::mutex     mu_;
     Class                  classes_[kNumPriorities];
     uint64_t               reserved_[kNumPriorities]{};
@@ -111,6 +152,10 @@ class PriorityScheduler {
 
     std::unordered_map<WorkId, Priority> id_to_class_;
     std::unordered_map<WorkId, uint64_t> id_to_bytes_;
+
+    // Metrics counters (lock-free atomics so stats reads stay cheap).
+    std::atomic<uint64_t> normal_admissions_{0};
+    std::atomic<uint64_t> forced_admissions_{0};
 };
 
 }  // namespace kvcache::node::transport
