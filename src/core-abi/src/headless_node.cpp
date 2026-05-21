@@ -184,7 +184,7 @@ int HeadlessNode::Publish(kv_handle_t handle, kv_buffer_desc_t /*src*/,
 // Fetch / Wait
 // ---------------------------------------------------------------------------
 
-int HeadlessNode::Fetch(kv_handle_t handle,
+int HeadlessNode::Fetch(kv_handle_t handle, uint64_t tenant_hash,
                         const kv_range_t* /*ranges*/, std::size_t /*n_ranges*/,
                         kv_buffer_desc_t dst,
                         kv_completion_t* out_completion) {
@@ -212,13 +212,12 @@ int HeadlessNode::Fetch(kv_handle_t handle,
         dst_mr == node::transport::kInvalidMrKey) return KV_E_TRANSPORT;
 
     node::transport::PullRequest req{dst_mr, 0, src_mr, 0, f.data.size()};
-    // Tenant hashing for Fetch traffic isn't wired through yet (the C ABI
-    // entry doesn't carry tenant context here). Phase E-3 will pull the
-    // tenant UUID from the kv_ctx_t; for now we use the system bucket and
-    // submit at P1 — the default class for ordinary Fetch.
+    // P1 is the default class for ordinary Fetch. The tenant hash routes
+    // each caller into its own per-tenant FIFO inside the class — so two
+    // tenants' Fetches interleave under round-robin instead of one
+    // tenant's burst monopolising the link.
     if (!nixl_->ScheduledPull(req, node::transport::Priority::P1,
-                                node::transport::kSystemTenantHash,
-                                5000, &err)) {
+                                tenant_hash, 5000, &err)) {
         nixl_->Unregister(src_mr);
         nixl_->Unregister(dst_mr);
         return KV_E_TRANSPORT;

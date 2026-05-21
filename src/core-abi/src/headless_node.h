@@ -62,7 +62,11 @@ class HeadlessNode {
 
     int Publish(kv_handle_t handle, kv_buffer_desc_t src, uint64_t watermark);
 
-    int Fetch(kv_handle_t handle,
+    // `tenant_hash` plumbs the caller's tenant identity through to the
+    // PriorityScheduler so per-tenant round-robin actually kicks in. Pass
+    // 0 (kSystemTenantHash) for system traffic that should share a single
+    // bucket — see kv_abi.cpp for the FNV-1a string→u64 hash the C ABI uses.
+    int Fetch(kv_handle_t handle, uint64_t tenant_hash,
               const kv_range_t* ranges, std::size_t n_ranges,
               kv_buffer_desc_t dst,
               kv_completion_t* out_completion);

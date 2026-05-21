@@ -67,8 +67,12 @@ small transfer in the same priority. The scheduler lives **inside**
 `NixlWrapper`: every `ScheduledPull` goes through `Submit → dispatcher
 thread → TryNext → backend->Pull → OnComplete`, so admission decisions
 actually throttle the data plane (not just an in-memory bookkeeping
-exercise). Admissions, forced admissions, and queue depth are exposed
-as Prometheus counters / gauges.
+exercise). The C ABI hashes each context's `tenant_id` string at
+`kv_ctx_open` and plumbs it through `Fetch → ScheduledPull → Submit`,
+so two clients with different `tenant_id`s really do land in different
+per-tenant FIFOs and get round-robin'd inside the same priority class.
+Admissions, forced admissions, and queue depth are exposed as
+Prometheus counters / gauges.
 
 ### 3. Five-tier storage with lazy promotion and cross-tenant eviction
 

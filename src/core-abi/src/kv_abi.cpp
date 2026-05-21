@@ -19,9 +19,31 @@ extern "C" {
 struct kv_ctx_s {
     std::string  tenant_id;
     std::string  model_id;
-    uint64_t     model_id_hash = 0;
+    uint64_t     model_id_hash  = 0;
+    // FNV-1a 64-bit hash of `tenant_id`, computed at ctx open and used to
+    // route the caller's Pulls into a per-tenant bucket inside the
+    // PriorityScheduler (Phase E-3). 0 if `tenant_id` is empty — that
+    // collides with kSystemTenantHash, which is the intended "system /
+    // unscoped traffic" bucket.
+    uint64_t     tenant_id_hash = 0;
     kvcache::abi::HeadlessNode* node = nullptr;
 };
+
+namespace {
+
+// FNV-1a 64-bit hash. Same primitives as model_id_hash; deliberately not
+// cryptographic — the scheduler only needs a stable, distinct-per-string
+// identifier for fair RR rotation.
+uint64_t Fnv1a64(const std::string& s) {
+    uint64_t h = 0xcbf29ce484222325ULL;
+    for (char ch : s) {
+        h ^= static_cast<uint8_t>(ch);
+        h *= 0x100000001b3ULL;
+    }
+    return h;
+}
+
+}  // namespace
 
 KV_API int kv_ctx_open(const kv_ctx_config_t* cfg, kv_ctx_t** out_ctx) {
     if (!cfg || !out_ctx) return KV_E_INVAL;
@@ -47,13 +69,8 @@ KV_API int kv_ctx_open(const kv_ctx_config_t* cfg, kv_ctx_t** out_ctx) {
     auto c = new kv_ctx_s();
     if (cfg->tenant_id) c->tenant_id = cfg->tenant_id;
     if (cfg->model_id)  c->model_id  = cfg->model_id;
-    // Hash the model_id string into a 64-bit canonical hash.
-    uint64_t h = 0xcbf29ce484222325ULL;
-    for (char ch : c->model_id) {
-        h ^= static_cast<uint8_t>(ch);
-        h *= 0x100000001b3ULL;
-    }
-    c->model_id_hash = h;
+    c->model_id_hash  = Fnv1a64(c->model_id);
+    c->tenant_id_hash = c->tenant_id.empty() ? 0 : Fnv1a64(c->tenant_id);
     c->node = node;
     *out_ctx = c;
     return KV_OK;
@@ -88,7 +105,8 @@ KV_API int kv_fetch(kv_ctx_t* ctx, kv_handle_t handle,
                    const kv_range_t* ranges, size_t n,
                    kv_buffer_desc_t dst, kv_completion_t* completion) {
     if (!ctx || !ctx->node) return KV_E_INVAL;
-    return ctx->node->Fetch(handle, ranges, n, dst, completion);
+    return ctx->node->Fetch(handle, ctx->tenant_id_hash,
+                             ranges, n, dst, completion);
 }
 
 KV_API int kv_wait(kv_ctx_t* ctx, kv_completion_t cid, uint32_t timeout_ms) {
