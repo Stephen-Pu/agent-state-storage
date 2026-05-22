@@ -171,7 +171,9 @@ Expected end of `make all`:
 ...
 src/adapters/vllm/tests/test_e2e_demo.py::test_prefix_reuse_across_two_requests PASSED
 src/adapters/vllm/tests/test_e2e_demo.py::test_lookup_miss_returns_none PASSED
-============================== 2 passed in 0.04s ===============================
+src/adapters/sglang/tests/test_backend.py::test_store_then_retrieve_round_trip PASSED
+... (6 more SGLangKVBackend tests)
+============================== 8 passed in 0.1s ================================
 ```
 
 Full setup including troubleshooting: [BUILD.md](./BUILD.md).
@@ -250,8 +252,10 @@ LLD section it implements.
   the gRPC variant lands once etcd v3 protos are vendored. Fine for
   control-plane traffic (membership, quota, bloom-sketch sync); not
   yet for sub-ms hot-path roundtrips.
-- **Engine adapters** — vLLM has a working Python connector;
-  SGLang / AIBrix / TRT-LLM are stubs.
+- **Engine adapters** — vLLM and SGLang both have working Python
+  connectors against the Core ABI (SGLang exposes the RadixAttention-
+  shaped `lookup / store / retrieve / drop` surface); AIBrix and
+  TRT-LLM are stubs.
 - **K8s operator** scaffolds CRDs but doesn't yet emit StatefulSets.
 
 This is an **honest MVP**: the architecture is complete and verified
