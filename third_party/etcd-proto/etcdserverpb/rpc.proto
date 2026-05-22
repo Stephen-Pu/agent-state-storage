@@ -1,0 +1,163 @@
+// etcd v3.5 etcdserverpb — KV + Lease subset for Phase F-2.
+// Source: etcd-io/etcd/api/etcdserverpb/rpc.proto.
+//
+// What we keep:
+//   * KV service: Range / Put / DeleteRange / Txn.
+//   * Lease service: LeaseGrant / LeaseRevoke / LeaseTimeToLive.
+//     (LeaseKeepAlive is a bidirectional stream; we use LeaseTimeToLive
+//     as a single-shot ping in the C++ client, matching what the HTTP
+//     gateway does under the hood.)
+//
+// What we deliberately strip:
+//   * Watch — the streaming Watch RPC. Phase F-2 polls (same as
+//     HttpEtcdClient); Phase F-3 wires the real bidi stream.
+//   * Auth / Cluster / Maintenance — not needed by the operator path.
+//   * gogoproto annotations.
+//   * google.api HTTP annotations (no gateway).
+syntax = "proto3";
+
+package etcdserverpb;
+
+option go_package = "github.com/alluxio/kvcache/third_party/etcdpb/etcdserverpb;etcdserverpb";
+
+import "mvccpb/kv.proto";
+
+// Mirrors etcd's etcdserver.ResponseHeader.
+message ResponseHeader {
+    uint64 cluster_id = 1;
+    uint64 member_id  = 2;
+    int64  revision   = 3;
+    uint64 raft_term  = 4;
+}
+
+// ---- KV service ----------------------------------------------------------
+
+message RangeRequest {
+    enum SortOrder { NONE = 0; ASCEND = 1; DESCEND = 2; }
+    enum SortTarget { KEY = 0; VERSION = 1; CREATE = 2; MOD = 3; VALUE = 4; }
+    bytes      key                = 1;
+    bytes      range_end          = 2;
+    int64      limit              = 3;
+    int64      revision           = 4;
+    SortOrder  sort_order         = 5;
+    SortTarget sort_target        = 6;
+    bool       serializable       = 7;
+    bool       keys_only          = 8;
+    bool       count_only         = 9;
+    int64      min_mod_revision   = 10;
+    int64      max_mod_revision   = 11;
+    int64      min_create_revision = 12;
+    int64      max_create_revision = 13;
+}
+message RangeResponse {
+    ResponseHeader     header = 1;
+    repeated mvccpb.KeyValue kvs    = 2;
+    bool               more   = 3;
+    int64              count  = 4;
+}
+
+message PutRequest {
+    bytes key            = 1;
+    bytes value          = 2;
+    int64 lease          = 3;
+    bool  prev_kv        = 4;
+    bool  ignore_value   = 5;
+    bool  ignore_lease   = 6;
+}
+message PutResponse {
+    ResponseHeader  header  = 1;
+    mvccpb.KeyValue prev_kv = 2;
+}
+
+message DeleteRangeRequest {
+    bytes key       = 1;
+    bytes range_end = 2;
+    bool  prev_kv   = 3;
+}
+message DeleteRangeResponse {
+    ResponseHeader           header   = 1;
+    int64                    deleted  = 2;
+    repeated mvccpb.KeyValue prev_kvs = 3;
+}
+
+message RequestOp {
+    oneof request {
+        RangeRequest        request_range        = 1;
+        PutRequest          request_put          = 2;
+        DeleteRangeRequest  request_delete_range = 3;
+        TxnRequest          request_txn          = 4;
+    }
+}
+message ResponseOp {
+    oneof response {
+        RangeResponse       response_range        = 1;
+        PutResponse         response_put          = 2;
+        DeleteRangeResponse response_delete_range = 3;
+        TxnResponse         response_txn          = 4;
+    }
+}
+
+message Compare {
+    enum CompareResult { EQUAL = 0; GREATER = 1; LESS = 2; NOT_EQUAL = 3; }
+    enum CompareTarget { VERSION = 0; CREATE = 1; MOD = 2; VALUE = 3; LEASE = 4; }
+    CompareResult result = 1;
+    CompareTarget target = 2;
+    bytes         key    = 3;
+    oneof target_union {
+        int64 version          = 4;
+        int64 create_revision  = 5;
+        int64 mod_revision     = 6;
+        bytes value            = 7;
+        int64 lease            = 8;
+    }
+    bytes range_end = 64;
+}
+
+message TxnRequest {
+    repeated Compare    compare = 1;
+    repeated RequestOp  success = 2;
+    repeated RequestOp  failure = 3;
+}
+message TxnResponse {
+    ResponseHeader      header    = 1;
+    bool                succeeded = 2;
+    repeated ResponseOp responses = 3;
+}
+
+service KV {
+    rpc Range       (RangeRequest)       returns (RangeResponse);
+    rpc Put         (PutRequest)         returns (PutResponse);
+    rpc DeleteRange (DeleteRangeRequest) returns (DeleteRangeResponse);
+    rpc Txn         (TxnRequest)         returns (TxnResponse);
+}
+
+// ---- Lease service -------------------------------------------------------
+
+message LeaseGrantRequest  { int64 TTL = 1; int64 ID  = 2; }
+message LeaseGrantResponse {
+    ResponseHeader header = 1;
+    int64          ID     = 2;
+    int64          TTL    = 3;
+    string         error  = 4;
+}
+
+message LeaseRevokeRequest  { int64 ID = 1; }
+message LeaseRevokeResponse { ResponseHeader header = 1; }
+
+message LeaseTimeToLiveRequest {
+    int64 ID   = 1;
+    bool  keys = 2;
+}
+message LeaseTimeToLiveResponse {
+    ResponseHeader header     = 1;
+    int64          ID         = 2;
+    int64          TTL        = 3;  // remaining; -1 if not found
+    int64          grantedTTL = 4;
+    repeated bytes keys       = 5;
+}
+
+service Lease {
+    rpc LeaseGrant       (LeaseGrantRequest)       returns (LeaseGrantResponse);
+    rpc LeaseRevoke      (LeaseRevokeRequest)      returns (LeaseRevokeResponse);
+    rpc LeaseTimeToLive  (LeaseTimeToLiveRequest)  returns (LeaseTimeToLiveResponse);
+}

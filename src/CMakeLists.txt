@@ -122,14 +122,42 @@ endif()
 
 add_subdirectory(core/common)
 
-# core/proto is optional: only build when Protobuf is available. This keeps the
-# tree buildable on developer machines that don't have protoc installed yet.
-find_package(Protobuf QUIET)
+# Protobuf + gRPC — resolved ONCE here so downstream subdirs all see
+# the same exported targets. gRPC's CONFIG package transitively imports
+# Protobuf, so calling find_package(Protobuf) at the same scope would
+# double-define the protobuf::libprotobuf target. We rely on gRPC's
+# transitive find_dependency(Protobuf) when grpc is present, and fall
+# back to a standalone find_package(Protobuf) when it isn't (the
+# core/proto path still works that way).
+find_package(gRPC CONFIG QUIET)
+if(NOT gRPC_FOUND)
+    find_package(Protobuf QUIET)
+else()
+    set(Protobuf_FOUND TRUE)
+endif()
+
 if(Protobuf_FOUND)
     add_subdirectory(core/proto)
 else()
     message(STATUS "Protobuf not found; skipping core/proto. "
                    "Install protobuf-compiler to enable gRPC codegen.")
+endif()
+
+# Phase F-2: vendored etcd v3 protos → kvcache_etcd_proto, only when
+# both protoc + gRPC C++ are available. Absent => the GrpcEtcdClient
+# stays in its stub state.
+if(Protobuf_FOUND AND gRPC_FOUND)
+    set(KVCACHE_HAVE_GRPC TRUE)
+    message(STATUS "gRPC C++ found (${gRPC_VERSION}); building "
+                   "kvcache_etcd_proto + GrpcEtcdClient")
+    add_subdirectory(${CMAKE_SOURCE_DIR}/../third_party/etcd-proto
+                       ${CMAKE_BINARY_DIR}/third_party/etcd-proto)
+else()
+    set(KVCACHE_HAVE_GRPC FALSE)
+    message(STATUS "gRPC C++ not found via find_package(gRPC CONFIG); "
+                   "GrpcEtcdClient stays stubbed. Install with "
+                   "`brew install grpc` (macOS) or `apt-get install "
+                   "libgrpc++-dev protobuf-compiler-grpc` (Debian).")
 endif()
 
 if(KVCACHE_BUILD_ABI)

@@ -167,13 +167,13 @@ sudo apt-get install cmake ninja-build g++ python3-venv golang-1.22
 python3 -m venv .venv && source .venv/bin/activate
 pip install cffi pytest
 
-make all      # zero warnings, 196/196 tests pass, ~4 minutes cold start
+make all      # zero warnings, 203/203 tests pass, ~4 minutes cold start
 ```
 
 Expected end of `make all`:
 
 ```
-100% tests passed, 0 tests failed out of 196
+100% tests passed, 0 tests failed out of 203
 ...
 src/adapters/vllm/tests/test_e2e_demo.py::test_prefix_reuse_across_two_requests PASSED
 src/adapters/vllm/tests/test_e2e_demo.py::test_lookup_miss_returns_none PASSED
@@ -214,7 +214,7 @@ LLD section it implements.
 
 **Working end-to-end** (run `make all` to verify):
 
-- 12 subsystems, 36 gtest binaries, **196 unit tests** — multi-thread
+- 12 subsystems, 37 gtest binaries, **203 unit tests** — multi-thread
   ART stress, cross-instance TCP Pull, persistent ART round-trip,
   WAL-incremental ART durability with torn-write recovery,
   concurrent PriorityScheduler, ScheduledPull through the NIXL
@@ -251,11 +251,16 @@ LLD section it implements.
   queueing. Tenant identity flows from `kv_ctx_open(tenant_id="...")`
   through FNV-1a-64 into per-tenant FIFOs, so two clients in the same
   priority class round-robin instead of starving each other.
-- **Real etcd**: embedded etcd v3.5 in Go tests; in C++, a real
-  `HttpEtcdClient` (KV + Lease + polling Watch) against a live etcd
-  cluster's v3 JSON gateway — no grpc++ / proto-vendoring dep. The
-  `IEtcdClient` abstraction lets in-memory, HTTP, and a future gRPC
-  backend plug in interchangeably.
+- **Real etcd, two C++ backends**: `HttpEtcdClient` talks to the etcd
+  v3 JSON gateway over libcurl (no grpc dep needed — runs out of the
+  box on a dev laptop). `GrpcEtcdClient` talks to the canonical
+  gRPC API using vendored etcd v3 protos at
+  `third_party/etcd-proto/` — automatically enabled when
+  `find_package(gRPC CONFIG)` succeeds, with the stub branch staying
+  in place for builds without grpc installed. Both implement the
+  same `IEtcdClient` surface (KV + Lease + polling Watch), so
+  swapping is a one-line construction change. The Go side uses
+  embedded etcd v3.5 in tests.
 - Real Helm chart that renders a deployable K8s manifest.
 - **K8s operator** with two reconcilers: `KVCacheCluster` emits the
   full nine-resource tree per cluster — kvstore-node `StatefulSet` +
@@ -290,10 +295,6 @@ LLD section it implements.
   RDMA-capable hardware (Mellanox CX-6/7 + IB or RoCE fabric). The
   `INixlBackend` interface is built so they slot in alongside
   `TcpBackend` without touching call sites.
-- **gRPC etcd client** — `HttpEtcdClient` is the C++ path today;
-  the gRPC variant lands once etcd v3 protos are vendored. Fine for
-  control-plane traffic (membership, quota, bloom-sketch sync); not
-  yet for sub-ms hot-path roundtrips.
 - **Engine adapters** — vLLM, SGLang, AIBrix, and TRT-LLM all ship
   working adapters against the Core ABI. The three Python adapters
   (vLLM / SGLang / AIBrix) are ~50 LOC shells on top of a shared
@@ -321,7 +322,9 @@ end-to-end; production hardening is the next phase.
 **Next** (6–12 months):
 
 - UCX / GDR / GDS / NVLink NIXL backends once RDMA hardware arrives
-- gRPC etcd client (etcd v3 protos vendored)
+- Streaming-Watch path on `GrpcEtcdClient` (today both etcd clients
+  poll; the bidirectional Watch stream is a clean follow-up against
+  the vendored protos)
 - mmap-backed persistent-ART node arena + copy-on-write replication
   (D-2 today is snapshot + record-level WAL — already incremental,
   but the tree itself still rebuilds in memory at boot)

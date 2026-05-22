@@ -1,0 +1,37 @@
+// etcd v3.5 mvccpb — stripped to the messages the KV + Watch responses
+// actually reference. Source: etcd-io/etcd/mvcc/mvccpb/kv.proto
+//
+// All gogoproto annotations removed. google.api / google.protobuf imports
+// kept out to minimize the vendor tree; no timestamps, no rich types.
+syntax = "proto3";
+
+package mvccpb;
+
+option go_package = "github.com/alluxio/kvcache/third_party/etcdpb/mvccpb;mvccpb";
+
+message KeyValue {
+    // Raw key bytes.
+    bytes  key             = 1;
+    // The revision the key was first created at.
+    int64  create_revision = 2;
+    // The revision the key was last modified at.
+    int64  mod_revision    = 3;
+    // The version of the key (incremented per modification at this revision).
+    int64  version         = 4;
+    // Raw value bytes.
+    bytes  value           = 5;
+    // The lease ID attached to this key (0 = none).
+    int64  lease           = 6;
+}
+
+message Event {
+    enum EventType {
+        PUT    = 0;
+        DELETE = 1;
+    }
+    EventType type     = 1;
+    // The KV at the point of the event.
+    KeyValue  kv       = 2;
+    // The previous KV before this event (Put) / delete (Delete).
+    KeyValue  prev_kv  = 3;
+}

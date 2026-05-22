@@ -4,12 +4,11 @@
 # kvcache_proto target. Go stubs are generated separately by the Go build
 # (see control-plane/Makefile, to be added).
 
-find_package(Protobuf REQUIRED)
-find_package(gRPC CONFIG QUIET)
+# Protobuf + gRPC were already resolved at the top-level
+# src/CMakeLists.txt (find_package(Protobuf) + find_package(gRPC CONFIG)).
+# Re-finding them here would cause a duplicate-target error since gRPC's
+# transitive Protobuf import collides with the local one.
 if(NOT gRPC_FOUND)
-  # Informational only — proto messages still compile via libprotobuf; only
-  # the gRPC-service stubs are deferred until the dep is wired. STATUS keeps
-  # this out of warning-grepping CI checks.
   message(STATUS "gRPC not found via find_package; C++ proto build will be "
                  "stubbed until dependencies are vendored.")
 endif()
@@ -32,9 +31,20 @@ foreach(_p ${PROTO_FILES})
     list(APPEND PROTO_HDRS ${PROTO_OUT_DIR}/${_name}.pb.h)
 endforeach()
 
+# Resolve `protoc` from whatever shape the package import gave us —
+# either the imported target (`protobuf::protoc`) or the legacy
+# `Protobuf_PROTOC_EXECUTABLE` variable.
+if(TARGET protobuf::protoc)
+    set(_protoc "$<TARGET_FILE:protobuf::protoc>")
+elseif(Protobuf_PROTOC_EXECUTABLE)
+    set(_protoc "${Protobuf_PROTOC_EXECUTABLE}")
+else()
+    message(FATAL_ERROR "protoc not found via Protobuf package")
+endif()
+
 add_custom_command(
     OUTPUT  ${PROTO_SRCS} ${PROTO_HDRS}
-    COMMAND ${Protobuf_PROTOC_EXECUTABLE}
+    COMMAND ${_protoc}
             --proto_path=${CMAKE_CURRENT_SOURCE_DIR}
             --cpp_out=${PROTO_OUT_DIR}
             ${PROTO_FILES}

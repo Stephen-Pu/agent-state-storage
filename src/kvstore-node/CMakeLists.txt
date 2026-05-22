@@ -63,9 +63,18 @@ target_link_libraries(kvstore_node_core
         kvcache_common
         CURL::libcurl
         nlohmann_json::nlohmann_json
-    # TODO: rocksdb, nixl, ucx, uring, grpc++, protobuf, prometheus-cpp,
+    # TODO: rocksdb, nixl, ucx, uring, prometheus-cpp,
     # spdlog, abseil, openssl, $<IF:$<BOOL:${KVCACHE_ENABLE_SPDK}>,spdk,>.
 )
+
+# Phase F-2: when gRPC + the vendored etcd proto lib are available,
+# enable the real GrpcEtcdClient by defining KVCACHE_HAVE_GRPC and
+# linking the proto + grpc++ targets. Absent any of those, the
+# `#else` branch in cluster/etcd_client.cpp keeps the stub alive.
+if(KVCACHE_HAVE_GRPC)
+    target_link_libraries(kvstore_node_core PUBLIC kvcache_etcd_proto)
+    target_compile_definitions(kvstore_node_core PUBLIC KVCACHE_HAVE_GRPC=1)
+endif()
 
 # ---- Node binary ----
 add_executable(kvstore-node src/main.cpp)

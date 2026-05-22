@@ -123,6 +123,12 @@ kvcache_add_test(test_membership_fsm    cluster/membership_fsm_test.cpp      ${N
 target_link_libraries(test_membership_fsm PRIVATE CURL::libcurl nlohmann_json::nlohmann_json)
 kvcache_add_test(test_http_etcd_client  cluster/http_etcd_client_test.cpp    ${NODE_CLUSTER_SRCS})
 target_link_libraries(test_http_etcd_client PRIVATE CURL::libcurl nlohmann_json::nlohmann_json)
+kvcache_add_test(test_grpc_etcd_client  cluster/grpc_etcd_client_test.cpp    ${NODE_CLUSTER_SRCS})
+target_link_libraries(test_grpc_etcd_client PRIVATE CURL::libcurl nlohmann_json::nlohmann_json)
+if(KVCACHE_HAVE_GRPC)
+    target_link_libraries(test_grpc_etcd_client PRIVATE kvcache_etcd_proto)
+    target_compile_definitions(test_grpc_etcd_client PRIVATE KVCACHE_HAVE_GRPC=1)
+endif()
 kvcache_add_test(test_hrw               routing/hrw_test.cpp                 ${NODE_ROUTING_SRCS})
 kvcache_add_test(test_bloom_sketch      routing/bloom_sketch_test.cpp        ${NODE_ROUTING_SRCS})
 
