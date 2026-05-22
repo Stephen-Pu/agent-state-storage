@@ -46,6 +46,8 @@ set(NODE_CORE_SRCS
     # obs
     src/obs/metrics.cpp
     src/obs/logs.cpp
+    # runtime (Phase L-1)
+    src/runtime/node_runtime.cpp
 )
 
 add_library(kvstore_node_core STATIC ${NODE_CORE_SRCS})

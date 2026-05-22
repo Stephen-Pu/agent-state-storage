@@ -90,8 +90,14 @@ operator in-process against the kind apiserver, and asserts:
   child StatefulSets when the parent CR goes away — a path the fake
   client can't simulate.
 
-Pods CrashLoopBackOff (kvstore-node `main.cpp` is a stub) — the
-e2e only checks object shape, not workload liveness. Invocation:
+Pods land in `ImagePullBackOff` because the operator's default image
+(`ghcr.io/alluxio/kvcache:e2e`) isn't published yet — Phase L-2 will
+add the multi-stage Dockerfile + `kind load docker-image`. The
+kvstore-node binary itself is no longer a stub (Phase L-1 added a
+real `NodeRuntime` with TCP readiness + `/metrics` + `/healthz`),
+so once an image lands the same kind cluster will run real pods.
+Today's e2e checks object shape only, not workload liveness.
+Invocation:
 
 ```bash
 make e2e-operator          # ~45s; requires docker + kind + kubectl
