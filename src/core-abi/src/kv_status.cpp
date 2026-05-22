@@ -1,7 +1,12 @@
 // Error-code string table for kv_status_str().
 #include "kvcache/kv_errors.h"
 
-extern "C" const char* kv_status_str(int status) {
+// The shared library hides all C++ symbols by default; explicitly tag
+// this entry point as public so it's exported from libkvcache.{so,dylib}.
+// The other C ABI entries in kv_abi.cpp use the same attribute through
+// the KV_API macro.
+extern "C" __attribute__((visibility("default")))
+const char* kv_status_str(int status) {
     switch (status) {
         case KV_OK:                 return "OK";
         case KV_E_INVAL:            return "invalid argument";

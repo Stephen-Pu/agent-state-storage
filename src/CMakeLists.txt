@@ -173,4 +173,20 @@ if(KVCACHE_BUILD_TESTS)
   endif()
 
   add_subdirectory(tests/unit)
+
+  # The TRT-LLM adapter ships a C++ library that links the public C ABI
+  # shared lib (`kvcache`). The library itself is part of any ABI build;
+  # we add it here (inside KVCACHE_BUILD_TESTS) only because the gtest
+  # binary inside it needs enable_testing() and GTest::gtest_main to be
+  # in scope. The lib target itself is unconditional behind KVCACHE_BUILD_ABI.
+  if(KVCACHE_BUILD_ABI)
+    add_subdirectory(adapters/trtllm)
+  endif()
+endif()
+
+# When tests are disabled we still build the TRT-LLM static library so
+# downstream packagers get `libkvcache_trtllm.a`. The CMakeLists inside
+# guards the test executable on KVCACHE_BUILD_TESTS.
+if(KVCACHE_BUILD_ABI AND NOT KVCACHE_BUILD_TESTS)
+  add_subdirectory(adapters/trtllm)
 endif()

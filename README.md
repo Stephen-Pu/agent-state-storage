@@ -161,13 +161,13 @@ sudo apt-get install cmake ninja-build g++ python3-venv golang-1.22
 python3 -m venv .venv && source .venv/bin/activate
 pip install cffi pytest
 
-make all      # zero warnings, 159/159 tests pass, ~4 minutes cold start
+make all      # zero warnings, 167/167 tests pass, ~4 minutes cold start
 ```
 
 Expected end of `make all`:
 
 ```
-100% tests passed, 0 tests failed out of 159
+100% tests passed, 0 tests failed out of 167
 ...
 src/adapters/vllm/tests/test_e2e_demo.py::test_prefix_reuse_across_two_requests PASSED
 src/adapters/vllm/tests/test_e2e_demo.py::test_lookup_miss_returns_none PASSED
@@ -208,11 +208,12 @@ LLD section it implements.
 
 **Working end-to-end** (run `make all` to verify):
 
-- 12 subsystems, 31 gtest binaries, **159 unit tests** — multi-thread
+- 12 subsystems, 32 gtest binaries, **167 unit tests** — multi-thread
   ART stress, cross-instance TCP Pull, persistent ART round-trip,
   concurrent PriorityScheduler, ScheduledPull through the NIXL
-  dispatcher, HttpEtcdClient error-path coverage. Live-etcd
-  integration tests run opt-in via `ETCD_ENDPOINT=...`.
+  dispatcher, HttpEtcdClient error-path coverage, and the TRT-LLM
+  C++ backend round-trip. Live-etcd integration tests run opt-in
+  via `ETCD_ENDPOINT=...`.
 - In-process headless backend — the Python demo runs the full LPM →
   fetch → tier promotion → seal → cross-request reuse flow.
 - **Real BLAKE3** for prefix hashing, chunk identity, and HRW
@@ -269,13 +270,15 @@ LLD section it implements.
   the gRPC variant lands once etcd v3 protos are vendored. Fine for
   control-plane traffic (membership, quota, bloom-sketch sync); not
   yet for sub-ms hot-path roundtrips.
-- **Engine adapters** — vLLM, SGLang, and AIBrix all ship working
-  Python connectors against the Core ABI. SGLang exposes
-  RadixAttention's `lookup / store / retrieve / drop`; AIBrix
-  exposes KVCache Connector v1's `get / put / delete / exists`. All
-  three adapters are ~50 LOC shells on top of a shared
-  `kvcache_core` package that holds the `cffi` substrate. TRT-LLM
-  is still a stub (C++ engine; needs a different binding path).
+- **Engine adapters** — vLLM, SGLang, AIBrix, and TRT-LLM all ship
+  working adapters against the Core ABI. The three Python adapters
+  (vLLM / SGLang / AIBrix) are ~50 LOC shells on top of a shared
+  `kvcache_core` package that holds the `cffi` substrate; the C++
+  adapter (TRT-LLM) is a static archive linking `libkvcache.{so,dylib}`
+  directly. Each surface mirrors its engine's expected verbs —
+  SGLang's `lookup / store / retrieve / drop`, AIBrix's
+  `get / put / delete / exists`, TRT-LLM's `Lookup / Store /
+  Retrieve / Drop`.
 - **K8s operator** — `cert-manager` integration (`useCertManager:
   true` switch), mTLS cert rotation, the CP-side wiring that pushes
   validated tenant quotas to etcd, and the `joining / draining /
