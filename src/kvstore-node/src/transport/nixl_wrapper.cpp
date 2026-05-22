@@ -10,6 +10,8 @@
 // plug in behind the same INixlBackend interface once hardware is wired.
 #include "transport/nixl_wrapper.h"
 
+#include "trace.h"
+
 #include <atomic>
 #include <cstring>
 #include <mutex>
@@ -188,7 +190,17 @@ bool NixlWrapper::PullSync(const PullRequest& req, uint32_t timeout_ms, std::str
 bool NixlWrapper::ScheduledPull(const PullRequest& req, Priority prio,
                                   uint64_t tenant_hash, uint32_t timeout_ms,
                                   std::string* err) {
-    if (!backend_) { if (err) *err = "nixl: no backend"; return false; }
+    auto span = kvcache::trace::Tracer::Get().StartSpan("nixl.scheduled_pull");
+    span.SetAttribute("nixl.bytes",        static_cast<int64_t>(req.bytes));
+    span.SetAttribute("nixl.tenant_hash",  static_cast<int64_t>(tenant_hash));
+    span.SetAttribute("nixl.priority",     static_cast<int64_t>(prio));
+    span.SetAttribute("nixl.backend",      name_);
+
+    if (!backend_) {
+        span.SetError("no backend");
+        if (err) *err = "nixl: no backend";
+        return false;
+    }
 
     PendingPull pp;
     pp.req        = req;
@@ -209,6 +221,7 @@ bool NixlWrapper::ScheduledPull(const PullRequest& req, Priority prio,
     pp.cv.wait(lk, [&] { return pp.done; });
 
     if (err) *err = pp.err;
+    if (!pp.ok) span.SetError(pp.err);
     return pp.ok;
 }
 

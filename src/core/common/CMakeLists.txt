@@ -6,6 +6,7 @@ add_library(kvcache_common STATIC
     logging.cpp
     metrics.cpp
     hashing.cpp
+    trace.cpp            # OTel-shaped tracing facade (Phase J-1)
 )
 
 target_include_directories(kvcache_common

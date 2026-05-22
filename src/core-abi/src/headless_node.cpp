@@ -7,6 +7,7 @@
 
 #include "kvcache/kv_errors.h"
 #include "prefix/art_snapshot.h"
+#include "trace.h"
 
 namespace kvcache::abi {
 
@@ -109,12 +110,21 @@ int HeadlessNode::Lookup(const char* /*tenant_id*/, uint64_t /*model_id_hash*/,
                          kv_locator_t* out_meta,
                          kv_handle_t*  out_handle,
                          uint32_t*     out_matched_tokens) {
+    auto span = kvcache::trace::Tracer::Get().StartSpan("kv.lookup");
+    span.SetAttribute("kv.tokens_requested", static_cast<int64_t>(n));
+
     if (!tokens || n == 0 || !out_meta || !out_handle || !out_matched_tokens) {
+        span.SetError("invalid argument");
         return KV_E_INVAL;
     }
     auto g = art_->EnterRead();
     auto r = node::prefix::LongestPrefixMatch(*art_, {tokens, n}, g);
-    if (r.matched_tokens == 0 || !r.leaf) return KV_E_NOT_FOUND;
+    if (r.matched_tokens == 0 || !r.leaf) {
+        span.SetAttribute("kv.hit", false);
+        return KV_E_NOT_FOUND;
+    }
+    span.SetAttribute("kv.hit", true);
+    span.SetAttribute("kv.matched_tokens", static_cast<int64_t>(r.matched_tokens));
 
     // Acquire a hold on the leaf for the caller. Race-safe: if the evictor
     // got there first refcount is zero and we miss.
@@ -188,14 +198,24 @@ int HeadlessNode::Fetch(kv_handle_t handle, uint64_t tenant_hash,
                         const kv_range_t* /*ranges*/, std::size_t /*n_ranges*/,
                         kv_buffer_desc_t dst,
                         kv_completion_t* out_completion) {
+    auto span = kvcache::trace::Tracer::Get().StartSpan("kv.fetch");
+    span.SetAttribute("kv.tenant_hash", static_cast<int64_t>(tenant_hash));
+    span.SetAttribute("kv.dst_bytes",   static_cast<int64_t>(dst.len));
+
     HandleState st;
     {
         std::lock_guard lk(mu_);
         auto it = handles_.find(handle);
-        if (it == handles_.end()) return KV_E_INVAL;
+        if (it == handles_.end()) {
+            span.SetError("unknown handle");
+            return KV_E_INVAL;
+        }
         st = it->second;
     }
-    if (st.kind != HandleKind::kRead || !st.leaf) return KV_E_INVAL;
+    if (st.kind != HandleKind::kRead || !st.leaf) {
+        span.SetError("not a read handle");
+        return KV_E_INVAL;
+    }
 
     // Resolve the bytes via the unified tier Fetch path.
     auto key = LocatorContentKey(st.locator);

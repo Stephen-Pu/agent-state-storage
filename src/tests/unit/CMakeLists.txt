@@ -132,3 +132,4 @@ kvcache_add_test(test_rbac              security/rbac_test.cpp               ${N
 kvcache_add_test(test_audit             security/audit_test.cpp              ${NODE_SECURITY_SRCS} ${NODE_QOS_SRCS})
 
 kvcache_add_test(test_metrics           obs/metrics_test.cpp)
+kvcache_add_test(test_trace             obs/trace_test.cpp)
