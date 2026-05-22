@@ -27,11 +27,40 @@ type KVCacheClusterSpec struct {
 	ByoEtcd       bool     `json:"byoEtcd,omitempty"`
 	EtcdEndpoints []string `json:"etcdEndpoints,omitempty"`
 
+	// Tunables for the in-cluster etcd StatefulSet emitted when
+	// `byoEtcd: false`. All fields have sensible defaults.
+	Etcd *EtcdSpec `json:"etcd,omitempty"`
+
+	// Tunables for the in-cluster control-plane StatefulSet.
+	ControlPlane *ControlPlaneSpec `json:"controlPlane,omitempty"`
+
 	// Alluxio binding for the T4 cold tier.
 	AlluxioBinding *AlluxioBinding `json:"alluxioBinding,omitempty"`
 
 	// Extra resource requests / limits applied to node pods.
 	NodeResources corev1.ResourceRequirements `json:"nodeResources,omitempty"`
+}
+
+// EtcdSpec configures the in-cluster etcd StatefulSet. Only honoured
+// when `KVCacheClusterSpec.ByoEtcd == false`.
+type EtcdSpec struct {
+	// Image. Default: "quay.io/coreos/etcd:v3.5.13".
+	Image string `json:"image,omitempty"`
+	// Replicas. Default: 3 (production etcd minimum for quorum).
+	// +kubebuilder:validation:Minimum=1
+	Replicas int32 `json:"replicas,omitempty"`
+	// Per-replica storage size (e.g. "10Gi"). Default: "10Gi".
+	StorageBytes string `json:"storageBytes,omitempty"`
+}
+
+// ControlPlaneSpec configures the in-cluster control-plane StatefulSet.
+type ControlPlaneSpec struct {
+	// Image. Default: same image as the node pods (built from the same
+	// repo at this stage).
+	Image string `json:"image,omitempty"`
+	// Replicas. Default: 3 for HA via etcd leader election.
+	// +kubebuilder:validation:Minimum=1
+	Replicas int32 `json:"replicas,omitempty"`
 }
 
 type TierSpec struct {

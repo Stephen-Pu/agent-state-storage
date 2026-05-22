@@ -72,13 +72,35 @@ func (r *KVCacheClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, err
 	}
 
-	// 4. StatefulSet
+	// 4. StatefulSet (kvstore-node)
 	sts := DesiredStatefulSet(&cluster)
 	if err := r.ensureOwned(ctx, &cluster, sts, mergeStatefulSet); err != nil {
 		return ctrl.Result{}, err
 	}
 
-	// 5. Status — current implementation reads from the StatefulSet's
+	// 5. In-cluster etcd peer group, unless the user opted into BYO.
+	if etcdSvc := DesiredEtcdService(&cluster); etcdSvc != nil {
+		if err := r.ensureOwned(ctx, &cluster, etcdSvc, mergeService); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+	if etcdSts := DesiredEtcdStatefulSet(&cluster); etcdSts != nil {
+		if err := r.ensureOwned(ctx, &cluster, etcdSts, mergeStatefulSet); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
+	// 6. Control-plane StatefulSet + headless Service.
+	cpSvc := DesiredControlPlaneService(&cluster)
+	if err := r.ensureOwned(ctx, &cluster, cpSvc, mergeService); err != nil {
+		return ctrl.Result{}, err
+	}
+	cpSts := DesiredControlPlaneStatefulSet(&cluster)
+	if err := r.ensureOwned(ctx, &cluster, cpSts, mergeStatefulSet); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// 7. Status — current implementation reads from the StatefulSet's
 	//    Ready/Current/UpdatedReplicas. The richer "joining / draining /
 	//    unreachable" breakdown waits for etcd-backed membership in
 	//    Phase H-2.

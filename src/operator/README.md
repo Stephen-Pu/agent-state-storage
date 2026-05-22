@@ -16,10 +16,14 @@ Each `KVCacheCluster` drives a four-resource desired-state tree:
 
 | Resource | Naming | Purpose |
 |----------|--------|---------|
-| `ServiceAccount` | `<cluster>-sa` | identity for `kvstore-node` pods |
+| `ServiceAccount` | `<cluster>-sa` | identity for `kvstore-node` and control-plane pods |
 | `ConfigMap` | `<cluster>-config` | cluster identity, NIXL backend, tier sizes, etcd endpoints |
-| `Service` (headless) | `<cluster>-nodes` | per-pod DNS + gRPC / metrics ports |
+| `Service` (headless) | `<cluster>-nodes` | per-pod DNS + gRPC / metrics ports for kvstore-node |
 | `StatefulSet` | `<cluster>-nodes` | `kvstore-node` replicas; per-pod PVC when NVMe tier is configured |
+| `Service` (headless) | `<cluster>-etcd` | etcd client + peer ports — emitted unless `byoEtcd: true` |
+| `StatefulSet` | `<cluster>-etcd` | 3-replica in-cluster etcd peer group; per-pod PVC for `/var/lib/etcd` |
+| `Service` (headless) | `<cluster>-cp` | control-plane gRPC port |
+| `StatefulSet` | `<cluster>-cp` | 3-replica control-plane, leader-elected through etcd |
 
 The reconcile loop is GET → CREATE-if-absent → PATCH-on-drift, scoped
 to the spec subset the operator owns. Child resources carry an
@@ -30,12 +34,13 @@ StatefulSet's `ReadyReplicas`. The richer
 `joining / draining / unreachable` breakdown will land once the
 membership FSM exposes it over etcd (Phase H-2).
 
-Still on the punch-list (Phase H-2+):
-- In-cluster etcd StatefulSet when `byoEtcd: false`
-  (placeholder DNS is written into the ConfigMap today).
-- Control-plane StatefulSet (CP gRPC service).
+Still on the punch-list (Phase H-3+):
 - mTLS Secret material (cert-manager integration).
 - DaemonSet flavour for labelled GPU hosts.
+- KVCacheTenant CRD controller (3D quota propagation).
+- etcd-backed `joining / draining / unreachable` status breakdown
+  (today's `.status` reports `nodesActive` / `nodesJoining` from
+  the StatefulSet's ReadyReplicas).
 
 ## Build & test
 

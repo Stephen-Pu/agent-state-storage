@@ -75,6 +75,14 @@ func (in *KVCacheClusterSpec) DeepCopyInto(out *KVCacheClusterSpec) {
 		out.EtcdEndpoints = make([]string, len(in.EtcdEndpoints))
 		copy(out.EtcdEndpoints, in.EtcdEndpoints)
 	}
+	if in.Etcd != nil {
+		out.Etcd = new(EtcdSpec)
+		*out.Etcd = *in.Etcd
+	}
+	if in.ControlPlane != nil {
+		out.ControlPlane = new(ControlPlaneSpec)
+		*out.ControlPlane = *in.ControlPlane
+	}
 	if in.AlluxioBinding != nil {
 		out.AlluxioBinding = new(AlluxioBinding)
 		*out.AlluxioBinding = *in.AlluxioBinding

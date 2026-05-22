@@ -9,6 +9,7 @@ package controller
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -307,5 +308,164 @@ func TestReconcileWithoutNvmeStillReturnsReadyServiceAccount(t *testing.T) {
 			t.Fatal("ServiceAccount missing")
 		}
 		t.Fatalf("get sa: %v", err)
+	}
+}
+
+// ---- Phase H-2: in-cluster etcd + control-plane ---------------------------
+
+func TestReconcileEmitsEtcdResourcesByDefault(t *testing.T) {
+	cluster := sampleCluster() // ByoEtcd defaults to false
+	r, cli := newReconciler(t, cluster)
+	reconcileOnce(t, r, cluster)
+
+	ctx := context.Background()
+	var svc corev1.Service
+	if err := cli.Get(ctx,
+		client.ObjectKey{Name: childName(cluster.Name, "etcd"), Namespace: cluster.Namespace}, &svc); err != nil {
+		t.Fatalf("etcd Service missing: %v", err)
+	}
+	if svc.Spec.ClusterIP != corev1.ClusterIPNone {
+		t.Errorf("etcd Service should be headless, got ClusterIP=%q", svc.Spec.ClusterIP)
+	}
+
+	var sts appsv1.StatefulSet
+	if err := cli.Get(ctx,
+		client.ObjectKey{Name: childName(cluster.Name, "etcd"), Namespace: cluster.Namespace}, &sts); err != nil {
+		t.Fatalf("etcd StatefulSet missing: %v", err)
+	}
+	if sts.Spec.Replicas == nil || *sts.Spec.Replicas != 3 {
+		t.Errorf("etcd replicas default = 3, got %v", sts.Spec.Replicas)
+	}
+	// initial-cluster arg must list every peer to make the static
+	// bootstrap deterministic.
+	args := strings.Join(sts.Spec.Template.Spec.Containers[0].Args, " ")
+	for i := 0; i < 3; i++ {
+		needle := childName(cluster.Name, "etcd") + "-" +
+			strconv.Itoa(i) + "." + childName(cluster.Name, "etcd")
+		if !strings.Contains(args, needle) {
+			t.Errorf("initial-cluster missing peer %s", needle)
+		}
+	}
+}
+
+func TestReconcileSkipsEtcdResourcesWhenByoEtcd(t *testing.T) {
+	cluster := sampleCluster()
+	cluster.Spec.ByoEtcd = true
+	cluster.Spec.EtcdEndpoints = []string{"http://external-etcd:2379"}
+	r, cli := newReconciler(t, cluster)
+	reconcileOnce(t, r, cluster)
+
+	ctx := context.Background()
+	var svc corev1.Service
+	err := cli.Get(ctx,
+		client.ObjectKey{Name: childName(cluster.Name, "etcd"), Namespace: cluster.Namespace}, &svc)
+	if !apierrors.IsNotFound(err) {
+		t.Errorf("BYO-etcd path should not emit an etcd Service, got %v", err)
+	}
+	var sts appsv1.StatefulSet
+	err = cli.Get(ctx,
+		client.ObjectKey{Name: childName(cluster.Name, "etcd"), Namespace: cluster.Namespace}, &sts)
+	if !apierrors.IsNotFound(err) {
+		t.Errorf("BYO-etcd path should not emit an etcd StatefulSet, got %v", err)
+	}
+
+	// And the node ConfigMap must reflect the external endpoint.
+	var cm corev1.ConfigMap
+	if err := cli.Get(ctx,
+		client.ObjectKey{Name: childName(cluster.Name, "config"), Namespace: cluster.Namespace}, &cm); err != nil {
+		t.Fatalf("ConfigMap missing: %v", err)
+	}
+	if !strings.Contains(cm.Data[configFileName], "http://external-etcd:2379") {
+		t.Errorf("ConfigMap missing BYO etcd endpoint:\n%s", cm.Data[configFileName])
+	}
+}
+
+func TestConfigMapPointsAtInClusterEtcdServiceByDefault(t *testing.T) {
+	cluster := sampleCluster()
+	r, cli := newReconciler(t, cluster)
+	reconcileOnce(t, r, cluster)
+
+	var cm corev1.ConfigMap
+	_ = cli.Get(context.Background(),
+		client.ObjectKey{Name: childName(cluster.Name, "config"), Namespace: cluster.Namespace}, &cm)
+	body := cm.Data[configFileName]
+	// Pod-0 DNS through the headless service should appear in the rendered config.
+	want := childName(cluster.Name, "etcd") + "-0." + childName(cluster.Name, "etcd")
+	if !strings.Contains(body, want) {
+		t.Errorf("ConfigMap missing in-cluster etcd endpoint %q:\n%s", want, body)
+	}
+}
+
+func TestReconcileEmitsControlPlane(t *testing.T) {
+	cluster := sampleCluster()
+	r, cli := newReconciler(t, cluster)
+	reconcileOnce(t, r, cluster)
+
+	ctx := context.Background()
+	var svc corev1.Service
+	if err := cli.Get(ctx,
+		client.ObjectKey{Name: childName(cluster.Name, "cp"), Namespace: cluster.Namespace}, &svc); err != nil {
+		t.Fatalf("CP Service missing: %v", err)
+	}
+	var sts appsv1.StatefulSet
+	if err := cli.Get(ctx,
+		client.ObjectKey{Name: childName(cluster.Name, "cp"), Namespace: cluster.Namespace}, &sts); err != nil {
+		t.Fatalf("CP StatefulSet missing: %v", err)
+	}
+	if sts.Spec.Replicas == nil || *sts.Spec.Replicas != 3 {
+		t.Errorf("CP replicas default = 3, got %v", sts.Spec.Replicas)
+	}
+	// The CP container must point at the in-cluster etcd by default.
+	args := strings.Join(sts.Spec.Template.Spec.Containers[0].Args, " ")
+	if !strings.Contains(args, "--etcd-endpoints=") {
+		t.Errorf("CP args missing etcd endpoints flag: %s", args)
+	}
+}
+
+func TestControlPlaneRespectsOverrides(t *testing.T) {
+	cluster := sampleCluster()
+	cluster.Spec.ControlPlane = &kvcachev1alpha1.ControlPlaneSpec{
+		Image:    "ghcr.io/alluxio/kvcache-cp:dev",
+		Replicas: 5,
+	}
+	r, cli := newReconciler(t, cluster)
+	reconcileOnce(t, r, cluster)
+
+	var sts appsv1.StatefulSet
+	_ = cli.Get(context.Background(),
+		client.ObjectKey{Name: childName(cluster.Name, "cp"), Namespace: cluster.Namespace}, &sts)
+	if *sts.Spec.Replicas != 5 {
+		t.Errorf("expected CP replicas=5, got %d", *sts.Spec.Replicas)
+	}
+	if got := sts.Spec.Template.Spec.Containers[0].Image; got != cluster.Spec.ControlPlane.Image {
+		t.Errorf("expected CP image %q, got %q", cluster.Spec.ControlPlane.Image, got)
+	}
+}
+
+func TestEtcdSpecRespectsOverrides(t *testing.T) {
+	cluster := sampleCluster()
+	cluster.Spec.Etcd = &kvcachev1alpha1.EtcdSpec{
+		Image:        "quay.io/coreos/etcd:v3.5.99",
+		Replicas:     5,
+		StorageBytes: "20Gi",
+	}
+	r, cli := newReconciler(t, cluster)
+	reconcileOnce(t, r, cluster)
+
+	var sts appsv1.StatefulSet
+	_ = cli.Get(context.Background(),
+		client.ObjectKey{Name: childName(cluster.Name, "etcd"), Namespace: cluster.Namespace}, &sts)
+	if *sts.Spec.Replicas != 5 {
+		t.Errorf("expected etcd replicas=5, got %d", *sts.Spec.Replicas)
+	}
+	if got := sts.Spec.Template.Spec.Containers[0].Image; got != cluster.Spec.Etcd.Image {
+		t.Errorf("expected etcd image %q, got %q", cluster.Spec.Etcd.Image, got)
+	}
+	if len(sts.Spec.VolumeClaimTemplates) != 1 {
+		t.Fatalf("expected one VCT, got %d", len(sts.Spec.VolumeClaimTemplates))
+	}
+	req := sts.Spec.VolumeClaimTemplates[0].Spec.Resources.Requests[corev1.ResourceStorage]
+	if req.String() != "20Gi" {
+		t.Errorf("expected etcd PVC size 20Gi, got %s", req.String())
 	}
 }
