@@ -162,6 +162,20 @@ if(KVCACHE_HAVE_GRPC)
         kvstore_node_grpc
         kvcache
     )
+
+    # Phase M-4: cross-process Pull e2e. Lives in its own binary so the
+    # HeadlessNode singleton can be initialised in TCP mode without
+    # colliding with the loopback-mode tests in test_node_data_service.
+    kvcache_add_test(test_cross_process_pull
+                      grpc/cross_process_pull_test.cpp
+                      ${NODE_TRANSPORT_SRCS})
+    target_include_directories(test_cross_process_pull PRIVATE
+        ${CMAKE_SOURCE_DIR}/core-abi/src
+    )
+    target_link_libraries(test_cross_process_pull PRIVATE
+        kvstore_node_grpc
+        kvcache
+    )
 endif()
 kvcache_add_test(test_trace             obs/trace_test.cpp)
 kvcache_add_test(test_trace_otlp        obs/trace_otlp_test.cpp)

@@ -9,6 +9,8 @@
 #include <cstring>
 #include <string>
 
+#include <cstdlib>
+
 #include "headless_node.h"
 #include "kvcache/kv_errors.h"
 #include "transport/nixl_wrapper.h"
@@ -47,6 +49,21 @@ uint64_t Fnv1a64(const std::string& s) {
     return h;
 }
 
+// Phase M-4 — read NIXL backend selection from the environment so
+// tests (and on-prem operators) can flip "loopback" -> "tcp" without
+// recompiling. Defaults match the demo / unit-test path.
+void ApplyNixlEnvOverrides(kvcache::abi::HeadlessNode::Options* opts) {
+    if (const char* b = std::getenv("KVCACHE_NIXL_BACKEND"); b && *b) {
+        opts->nixl_backend = b;
+    }
+    if (const char* h = std::getenv("KVCACHE_NIXL_BIND_HOST"); h && *h) {
+        opts->nixl_bind_host = h;
+    }
+    if (const char* p = std::getenv("KVCACHE_NIXL_BIND_PORT"); p && *p) {
+        opts->nixl_bind_port = static_cast<uint32_t>(std::atoi(p));
+    }
+}
+
 }  // namespace
 
 KV_API int kv_ctx_open(const kv_ctx_config_t* cfg, kv_ctx_t** out_ctx) {
@@ -65,6 +82,7 @@ KV_API int kv_ctx_open(const kv_ctx_config_t* cfg, kv_ctx_t** out_ctx) {
     opts.tier.enable_nvme = false;
     opts.tier.enable_cold = false;
     opts.nixl_backend = "loopback";
+    ApplyNixlEnvOverrides(&opts);
 
     std::string err;
     auto* node = kvcache::abi::HeadlessNode::GetOrCreate(opts, &err);
@@ -100,6 +118,7 @@ KV_API int kv_ctx_open_from_hashes(int32_t abi_version,
     opts.tier.enable_nvme = false;
     opts.tier.enable_cold = false;
     opts.nixl_backend = "loopback";
+    ApplyNixlEnvOverrides(&opts);
 
     std::string err;
     auto* node = kvcache::abi::HeadlessNode::GetOrCreate(opts, &err);

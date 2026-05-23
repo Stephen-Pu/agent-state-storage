@@ -49,7 +49,30 @@ void HeadlessNode::Shutdown() {
 }
 
 bool HeadlessNode::Init(const Options& opts, std::string* err) {
-    tm_ = node::tier::TierManager::Create(opts.tier, err);
+    // Phase M-4 — build the NIXL backend FIRST so we can hand its
+    // RegisterRegion to the pinned tier as its register_region
+    // callback. Without this hookup slot.mr_key stays 0 and the
+    // backend cannot ExportMr the slot pool for cross-process Pull.
+    node::transport::BackendOptions bo2;
+    bo2.name      = opts.nixl_backend;
+    bo2.bind_host = opts.nixl_bind_host;
+    bo2.bind_port = opts.nixl_bind_port;
+    auto backend = node::transport::CreateBackend(bo2, err);
+    if (!backend) return false;
+    auto* backend_raw = backend.get();
+    nixl_ = std::make_unique<node::transport::NixlWrapper>(std::move(backend));
+
+    // Inject the backend's RegisterRegion into the pinned tier options
+    // (caller-supplied callback wins if they already wired one).
+    node::tier::TierManager::Options tier_opts = opts.tier;
+    if (!tier_opts.pinned.register_region) {
+        tier_opts.pinned.register_region =
+            [backend_raw](void* base, uint64_t bytes) -> uint32_t {
+                std::string err;
+                return backend_raw->RegisterRegion(base, bytes, &err);
+            };
+    }
+    tm_ = node::tier::TierManager::Create(tier_opts, err);
     if (!tm_) return false;
 
     if (!opts.rocksdb_path.empty()) {
@@ -110,16 +133,9 @@ bool HeadlessNode::Init(const Options& opts, std::string* err) {
     }
     if (!art_ && !art_wal_) art_ = std::make_unique<node::prefix::ArtIndex>();
     events_  = std::make_unique<node::prefix::EventStream>();
-
-    node::transport::BackendOptions bo2;
-    bo2.name = opts.nixl_backend;
-    auto backend = node::transport::CreateBackend(bo2, err);
-    if (!backend) return false;
-    // The PriorityScheduler now lives inside NixlWrapper (Phase E-2). The
-    // wrapper's dispatcher thread is the single point where Pulls are
-    // issued, so admission decisions made by the scheduler actually
-    // throttle the data plane.
-    nixl_ = std::make_unique<node::transport::NixlWrapper>(std::move(backend));
+    // The PriorityScheduler lives inside NixlWrapper (Phase E-2); the
+    // backend was constructed above so the pinned tier could register
+    // its pool with it.
     return true;
 }
 

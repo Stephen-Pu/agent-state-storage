@@ -41,6 +41,11 @@ class HeadlessNode {
         std::string rocksdb_path;
         // NIXL backend selection. "loopback" is the unit-test / demo default.
         std::string nixl_backend = "loopback";
+        // Phase M-4 — used when nixl_backend == "tcp". The TcpBackend
+        // binds a listener so peer backends can connect and Pull bytes
+        // from the pinned-tier slot pool. 0 = OS-picked port.
+        std::string nixl_bind_host = "127.0.0.1";
+        uint32_t    nixl_bind_port = 0;
         // Optional ART snapshot file. If set and the file exists at Init
         // time, the in-memory ART is restored from it — faster than the
         // RocksDB sealed-chunks scan. If the file is missing or invalid,
