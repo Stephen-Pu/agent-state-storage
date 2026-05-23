@@ -82,8 +82,7 @@ int main(int argc, char** argv) {
     }
     if (!tls_ca.empty() || !tls_cert.empty() || !tls_key.empty()) {
         std::fprintf(stderr,
-            "kvstore-node: mTLS paths recorded (ca=%s cert=%s key=%s) "
-            "but TLS termination not yet wired into the grpc server\n",
+            "kvstore-node: mTLS configured (ca=%s cert=%s key=%s)\n",
             tls_ca.c_str(), tls_cert.c_str(), tls_key.c_str());
     }
     o.grpc_port    = static_cast<uint16_t>(std::atoi(grpc_port_s.c_str()));
@@ -112,8 +111,11 @@ int main(int argc, char** argv) {
 
     kvcache::node::grpc_server::NodeDataServiceImpl svc(ctx);
     kvcache::node::grpc_server::GrpcServer::Options grpc_opts;
-    grpc_opts.bind_host = o.bind_host;
-    grpc_opts.port      = o.grpc_port;
+    grpc_opts.bind_host         = o.bind_host;
+    grpc_opts.port              = o.grpc_port;
+    grpc_opts.tls_ca_pem_path   = tls_ca;
+    grpc_opts.tls_cert_pem_path = tls_cert;
+    grpc_opts.tls_key_pem_path  = tls_key;
     kvcache::node::grpc_server::GrpcServer grpc(grpc_opts, &svc);
     if (!grpc.Ok()) {
         std::fprintf(stderr, "kvstore-node: grpc: %s\n", grpc.error().c_str());
@@ -122,6 +124,8 @@ int main(int argc, char** argv) {
     }
     o.skip_grpc_listener = true;
     o.grpc_port          = grpc.BoundPort();  // for log clarity
+    std::fprintf(stderr, "kvstore-node: grpc tls=%s\n",
+                  grpc.TlsEnabled() ? "on" : "off");
 #endif
 
     kvcache::node::runtime::NodeRuntime rt(o);

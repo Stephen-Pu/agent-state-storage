@@ -164,14 +164,14 @@ sudo apt-get install cmake ninja-build g++ python3-venv golang-1.22
 python3 -m venv .venv && source .venv/bin/activate
 pip install cffi pytest
 
-make all      # zero warnings, 207/207 tests pass, ~4 minutes cold start
+make all      # zero warnings, 210/210 tests pass, ~4 minutes cold start
 ```
 
 Expected end of `make all` (one block per language):
 
 ```
 # C++ ctest
-100% tests passed, 0 tests failed out of 207
+100% tests passed, 0 tests failed out of 210
 
 # Go (control-plane + operator)
 ok  github.com/alluxio/kvcache/control-plane/internal/membership   …
@@ -283,7 +283,11 @@ LLD section it implements.
   Service + ConfigMap + ServiceAccount` for kvstore-node, a 3-replica
   in-cluster etcd (skipped under `byoEtcd: true`), a 3-replica
   control-plane wired against the same etcd, and a self-signed mTLS
-  Secret mounted into every pod. The leaf cert auto-rotates around
+  Secret mounted into every pod. The kvstore-node binary's
+  `grpc::Server` reads that Secret and runs **mutual TLS** —
+  `REQUEST_AND_REQUIRE_CLIENT_CERTIFICATE_AND_VERIFY` — so an
+  unauthenticated client or one with a leaf signed by a different
+  CA gets rejected at the handshake. The leaf auto-rotates around
   the 1/3-lifetime mark; the CA stays stable across rotations and
   the next expiry surfaces on `.status.mtlsCertNotAfter`.
 - **K8s operator — tenant CRD propagation.** `KVCacheTenant` CRs are
@@ -318,10 +322,6 @@ LLD section it implements.
   separate CP image (today the CP pod reuses the kvstore-node
   image as a placeholder and CrashLoopBackOffs in the workload
   e2e — pod-shape is right, command is wrong).
-- **mTLS on the wire** — the operator mounts the Secret and the
-  binary records the cert paths, but `grpc::ServerCredentials` is
-  still insecure. Wiring those paths into `SslServerCredentials`
-  is a one-PR follow-up.
 - **Streaming Watch on `GrpcEtcdClient`** — both etcd clients poll
   today. The bidi `Watch` stream against the vendored protos lands
   in F-3.

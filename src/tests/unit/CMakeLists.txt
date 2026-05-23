@@ -152,6 +152,16 @@ if(KVCACHE_HAVE_GRPC)
         kvstore_node_grpc
         kvcache
     )
+
+    # Phase N-1: mTLS end-to-end. Skips at runtime if openssl(1) isn't
+    # on PATH, but still gets built so the credentials surface stays
+    # compile-tested.
+    kvcache_add_test(test_grpc_server_tls
+                      grpc/grpc_server_tls_test.cpp)
+    target_link_libraries(test_grpc_server_tls PRIVATE
+        kvstore_node_grpc
+        kvcache
+    )
 endif()
 kvcache_add_test(test_trace             obs/trace_test.cpp)
 kvcache_add_test(test_trace_otlp        obs/trace_otlp_test.cpp)
