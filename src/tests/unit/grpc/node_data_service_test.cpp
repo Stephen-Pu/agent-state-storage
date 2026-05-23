@@ -10,9 +10,11 @@
 
 #include <grpcpp/grpcpp.h>
 
+#include <atomic>
 #include <cstring>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "grpc/grpc_server.h"
@@ -169,18 +171,15 @@ TEST_F(NodeDataFixture, ReservePublishSealLookupRoundTrip) {
     s = stub_->Publish(&pctx, preq, &presp);
     ASSERT_TRUE(s.ok()) << s.error_message();
 
-    // Seal (Phase M-1: tokens are not yet carried over the wire; the
-    // service's kv_seal call passes an empty list, which the loopback
-    // path accepts for "the locator's prefix").
+    // Seal — Phase M-2 carries the token list over the wire so the
+    // server can drive kv_seal against the right ART path.
     ::grpc::ClientContext sctx;
     kvcache::proto::SealRequest sreq;
     sreq.set_server_handle(rresp.server_handle());
+    for (uint32_t t : tokens) sreq.add_tokens(t);
     kvcache::proto::SealResponse sresp;
     s = stub_->Seal(&sctx, sreq, &sresp);
-    if (!s.ok()) {
-        GTEST_SKIP() << "Seal: " << s.error_message()
-                     << " — Phase M-2 will carry tokens on the wire";
-    }
+    ASSERT_TRUE(s.ok()) << s.error_code() << ": " << s.error_message();
 
     // Subsequent Lookup with the same tokens should hit.
     ::grpc::ClientContext lctx;
@@ -212,11 +211,56 @@ TEST_F(NodeDataFixture, ReleaseUnknownHandleReturnsInvalidArgument) {
     EXPECT_EQ(s.error_code(), ::grpc::StatusCode::INVALID_ARGUMENT);
 }
 
-TEST_F(NodeDataFixture, SubscribeReturnsUnimplemented) {
-    ::grpc::ClientContext ctx;
-    kvcache::proto::SubscribeRequest req;
-    auto reader = stub_->Subscribe(&ctx, req);
-    auto s = reader->Finish();
-    EXPECT_FALSE(s.ok());
-    EXPECT_EQ(s.error_code(), ::grpc::StatusCode::UNIMPLEMENTED);
+TEST_F(NodeDataFixture, SubscribeDeliversAddEventOnSeal) {
+    // Subscribe in a worker thread; do a Reserve/Publish/Seal in the
+    // main thread; assert at least one Add event arrives on the
+    // stream. We cancel the worker via ClientContext::TryCancel as
+    // soon as we see one event so the test exits promptly.
+    ::grpc::ClientContext sub_ctx;
+    kvcache::proto::SubscribeRequest sub_req;
+
+    std::atomic<int> events_seen{0};
+    std::thread sub_thread([&] {
+        auto reader = stub_->Subscribe(&sub_ctx, sub_req);
+        kvcache::proto::Event ev;
+        while (reader->Read(&ev)) {
+            ++events_seen;
+            sub_ctx.TryCancel();  // one is enough for the assertion
+        }
+        (void)reader->Finish();
+    });
+
+    // Drive a write so the EventStream publishes an Add.
+    const auto tokens  = RangeTokens(11000, 2 * kChunkTokens);
+    const std::size_t bytes_total = tokens.size() * 64;
+
+    ::grpc::ClientContext rctx;
+    kvcache::proto::ReserveRequest rreq;
+    *rreq.mutable_locator() = BuildLocator(tenant_id_, model_id_, tokens,
+                                             bytes_total);
+    rreq.set_bytes(bytes_total);
+    kvcache::proto::ReserveResponse rresp;
+    auto s = stub_->Reserve(&rctx, rreq, &rresp);
+    ASSERT_TRUE(s.ok()) << s.error_message();
+
+    auto* slot = reinterpret_cast<uint8_t*>(rresp.slot_iova());
+    std::memset(slot, 0xAB, bytes_total);
+
+    ::grpc::ClientContext pctx;
+    kvcache::proto::PublishRequest preq;
+    preq.set_server_handle(rresp.server_handle());
+    preq.set_watermark(bytes_total);
+    kvcache::proto::PublishResponse presp;
+    ASSERT_TRUE(stub_->Publish(&pctx, preq, &presp).ok());
+
+    ::grpc::ClientContext sctx;
+    kvcache::proto::SealRequest sreq;
+    sreq.set_server_handle(rresp.server_handle());
+    for (uint32_t t : tokens) sreq.add_tokens(t);
+    kvcache::proto::SealResponse sresp;
+    ASSERT_TRUE(stub_->Seal(&sctx, sreq, &sresp).ok());
+
+    // Wait for the worker to drain (it cancels itself on first event).
+    sub_thread.join();
+    EXPECT_GE(events_seen.load(), 1);
 }

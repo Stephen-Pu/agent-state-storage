@@ -227,10 +227,14 @@ LLD section it implements.
   dispatcher, HttpEtcdClient error-path coverage, TRT-LLM C++
   backend round-trip, OTel-shaped trace facade, OTLP/HTTP exporter
   encoder, the kvstore-node `NodeRuntime` (TCP readiness probe +
-  Prometheus `/metrics` + `/healthz`), and the `NodeData` gRPC
+  Prometheus `/metrics` + `/healthz`), the `NodeData` gRPC
   service driven through a real `grpc::Server` (`Lookup`,
-  `Reserve`, `Publish`, `Fetch`, `Seal`, `Release` over the wire).
-  Live-etcd integration tests run opt-in via `ETCD_ENDPOINT=...`;
+  `Reserve`, `Publish`, `Fetch`, `Seal`, `Release` over the wire
+  plus a streaming `Subscribe` that delivers
+  `Add`/`Evict`/`Promote`/`Demote` events to live clients), and
+  **mTLS termination on the gRPC port** — clients without a
+  CA-signed cert are rejected at the handshake. Live-etcd
+  integration tests run opt-in via `ETCD_ENDPOINT=...`;
   live-OTel-collector ones run via `OTLP_ENDPOINT=...`.
 - In-process headless backend — the Python demo runs the full LPM →
   fetch → tier promotion → seal → cross-request reuse flow.
@@ -325,6 +329,18 @@ LLD section it implements.
 - **Streaming Watch on `GrpcEtcdClient`** — both etcd clients poll
   today. The bidi `Watch` stream against the vendored protos lands
   in F-3.
+- **gRPC `NodeData` is in-process only** — `ReserveResponse.slot_iova`
+  is a server-side host pointer, which only works when the agent and
+  kvstore-node share an address space. The cross-process /
+  cross-node path will replace the iova fields with a NIXL
+  `RemoteMrDescriptor` exchange (Phase M-3 — the TcpBackend already
+  carries the descriptor shape, just needs to land on the proto).
+- **Per-(tenant, model) `kv_ctx_t` cache in the gRPC service** —
+  today's binary opens one default ctx so every wire request lands
+  in the same scheduler bucket. Multi-tenant routing only kicks
+  in once the service opens per-tenant contexts at request time
+  (also Phase M-3; needs a small `kv_ctx_open_from_hashes` ABI
+  helper so the wire's model_id_hash is usable directly).
 
 This is an **honest MVP**: the architecture is complete and verified
 end-to-end; production hardening is the next phase.

@@ -126,9 +126,19 @@ int kv_release(kv_ctx_t* ctx, kv_handle_t handle);
 
 typedef void (*kv_event_callback_t)(const kv_event_t* event, void* user);
 
+/* Subscribe to KV events on this context's node. The callback fires on
+ * a dedicated poller thread; do not block inside it for more than a
+ * few microseconds. Returns KV_OK on success, KV_E_BUSY if a
+ * subscription is already active on this context (one subscription
+ * per ctx — open a second ctx if you need a second sink).            */
 int kv_subscribe_events(kv_ctx_t* ctx,
                         kv_event_callback_t cb,
                         void* user);
+
+/* Stop the active subscription on this context. Idempotent; safe to
+ * call even when no subscription exists. Blocks until the poller
+ * thread observes the cancel and exits.                              */
+int kv_unsubscribe_events(kv_ctx_t* ctx);
 
 #ifdef __cplusplus
 } /* extern "C" */

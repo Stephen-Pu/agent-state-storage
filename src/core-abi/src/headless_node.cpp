@@ -395,4 +395,59 @@ bool HeadlessNode::WriteArtSnapshot(const std::string& path, std::string* err) {
     return node::prefix::ArtSnapshot::Write(*art_, path, nullptr, err);
 }
 
+// ---------------------------------------------------------------------------
+// Event subscription (Phase M-2)
+// ---------------------------------------------------------------------------
+
+HeadlessNode::SubscriptionId
+HeadlessNode::SubscribeEvents(EventCallback cb, void* user) {
+    if (!events_ || !cb) return 0;
+    auto sub = std::make_unique<EventSub>();
+    sub->cb         = cb;
+    sub->user       = user;
+    sub->ring_handle = events_->Subscribe();
+
+    const SubscriptionId id =
+        next_sub_.fetch_add(1, std::memory_order_relaxed);
+    auto* raw = sub.get();
+    raw->poller = std::thread([this, raw] {
+        // Drain loop: poll the subscriber's ring, invoke cb on each
+        // event, sleep briefly when empty. Stops when `stop` is set.
+        while (!raw->stop.load(std::memory_order_acquire)) {
+            node::prefix::Event ev{};
+            if (events_->Poll(raw->ring_handle, &ev)) {
+                kv_event_t out{};
+                out.type    = static_cast<int32_t>(ev.type);
+                out.tier    = static_cast<int32_t>(ev.tier);
+                out.locator = ev.locator;
+                out.epoch   = ev.epoch;
+                raw->cb(&out, raw->user);
+            } else {
+                // Small backoff so an idle subscription doesn't spin
+                // a whole core. Production tuning: switch to a real
+                // condvar wake-up on Publish.
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+        }
+    });
+
+    std::lock_guard<std::mutex> lk(sub_mu_);
+    subs_.emplace(id, std::move(sub));
+    return id;
+}
+
+void HeadlessNode::UnsubscribeEvents(SubscriptionId id) {
+    std::unique_ptr<EventSub> taken;
+    {
+        std::lock_guard<std::mutex> lk(sub_mu_);
+        auto it = subs_.find(id);
+        if (it == subs_.end()) return;
+        taken = std::move(it->second);
+        subs_.erase(it);
+    }
+    taken->stop.store(true, std::memory_order_release);
+    if (taken->poller.joinable()) taken->poller.join();
+    if (events_) events_->Unsubscribe(taken->ring_handle);
+}
+
 }  // namespace kvcache::abi

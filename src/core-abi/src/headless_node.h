@@ -7,10 +7,12 @@
 // (tenant/model lives in the ctx, not in the node).
 #pragma once
 
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -88,6 +90,15 @@ class HeadlessNode {
     // checkpoint timer. Returns true on success; sets *err otherwise.
     bool WriteArtSnapshot(const std::string& path, std::string* err);
 
+    // Event subscription (Phase M-2). The poller thread invokes
+    // `cb(event, user)` on each Add / Evict / Promote / Demote event
+    // observed by the node's EventStream. One subscription per
+    // SubscriptionId — UnsubscribeEvents() cancels and joins.
+    using SubscriptionId = uint64_t;
+    using EventCallback  = void (*)(const kv_event_t* ev, void* user);
+    SubscriptionId SubscribeEvents(EventCallback cb, void* user);
+    void           UnsubscribeEvents(SubscriptionId id);
+
    private:
     HeadlessNode() = default;
 
@@ -124,6 +135,20 @@ class HeadlessNode {
     std::unique_ptr<node::prefix::ArtWal>              art_wal_;
     std::unique_ptr<node::prefix::EventStream>         events_;
     std::unique_ptr<node::transport::NixlWrapper>      nixl_;
+
+    // ----- event subscription bookkeeping (Phase M-2) -----
+    struct EventSub {
+        EventCallback cb   = nullptr;
+        void*         user = nullptr;
+        // Subscriber ring handle inside `events_`.
+        uint64_t      ring_handle = 0;
+        // Per-subscription poller. Joined inside UnsubscribeEvents.
+        std::thread   poller;
+        std::atomic<bool> stop{false};
+    };
+    mutable std::mutex                                            sub_mu_;
+    std::unordered_map<SubscriptionId, std::unique_ptr<EventSub>> subs_;
+    std::atomic<SubscriptionId>                                   next_sub_{1};
 };
 
 }  // namespace kvcache::abi

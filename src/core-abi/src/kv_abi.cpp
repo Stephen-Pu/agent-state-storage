@@ -27,6 +27,9 @@ struct kv_ctx_s {
     // unscoped traffic" bucket.
     uint64_t     tenant_id_hash = 0;
     kvcache::abi::HeadlessNode* node = nullptr;
+    // At most one active subscription per ctx (Phase M-2). The C ABI
+    // returns KV_E_BUSY on a second concurrent subscribe.
+    kvcache::abi::HeadlessNode::SubscriptionId sub_id = 0;
 };
 
 namespace {
@@ -77,6 +80,10 @@ KV_API int kv_ctx_open(const kv_ctx_config_t* cfg, kv_ctx_t** out_ctx) {
 }
 
 KV_API int kv_ctx_close(kv_ctx_t* ctx) {
+    if (ctx && ctx->sub_id && ctx->node) {
+        ctx->node->UnsubscribeEvents(ctx->sub_id);
+        ctx->sub_id = 0;
+    }
     delete ctx;
     return KV_OK;
 }
@@ -125,9 +132,22 @@ KV_API int kv_release(kv_ctx_t* ctx, kv_handle_t handle) {
     return ctx->node->Release(handle);
 }
 
-KV_API int kv_subscribe_events(kv_ctx_t*, kv_event_callback_t, void*) {
-    // TODO(stephen): wire to HeadlessNode::Events()->Subscribe + poll loop.
-    return KV_E_INTERNAL;
+KV_API int kv_subscribe_events(kv_ctx_t* ctx, kv_event_callback_t cb,
+                                  void* user) {
+    if (!ctx || !ctx->node || !cb) return KV_E_INVAL;
+    if (ctx->sub_id != 0) return KV_E_BUSY;
+    const auto id = ctx->node->SubscribeEvents(cb, user);
+    if (id == 0) return KV_E_INTERNAL;
+    ctx->sub_id = id;
+    return KV_OK;
+}
+
+KV_API int kv_unsubscribe_events(kv_ctx_t* ctx) {
+    if (!ctx || !ctx->node) return KV_E_INVAL;
+    if (ctx->sub_id == 0) return KV_OK;  // idempotent
+    ctx->node->UnsubscribeEvents(ctx->sub_id);
+    ctx->sub_id = 0;
+    return KV_OK;
 }
 
 }  // extern "C"

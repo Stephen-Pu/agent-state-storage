@@ -102,7 +102,14 @@ message FetchResponse {
   fixed64 completion_id = 1;  // poll/await via Subscribe or a future Wait RPC
 }
 
-message SealRequest    { fixed64 server_handle = 1; }
+message SealRequest    {
+  fixed64 server_handle = 1;
+  // The token sequence the agent committed during streaming write.
+  // The server derives the ART path from these tokens (chunked by 16),
+  // so identical token lists from concurrent writers collide on the
+  // same ART leaf — exactly what we want for prefix reuse.
+  repeated uint32 tokens = 2;
+}
 message SealResponse   { Locator locator = 1; uint64 epoch = 2; }
 
 message ReleaseRequest { fixed64 server_handle = 1; }

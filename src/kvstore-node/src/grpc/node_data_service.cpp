@@ -12,8 +12,13 @@
 // so test failures look identical whether you go through the wire or not.
 #include "grpc/node_data_service.h"
 
+#include <chrono>
+#include <condition_variable>
 #include <cstring>
+#include <deque>
+#include <mutex>
 #include <string>
+#include <vector>
 
 #include "kvcache/kv_errors.h"
 #include "kvcache/kv_types.h"
@@ -191,26 +196,16 @@ void ToProtoLocator(const kv_locator_t& in, kvcache::proto::Locator* out) {
     const kvcache::proto::SealRequest* request,
     kvcache::proto::SealResponse*      response) {
     if (!ctx_) return {::grpc::StatusCode::FAILED_PRECONDITION, "no ctx"};
-    // SealRequest in the proto carries only server_handle. The tokens
-    // are bound at Reserve-time inside the server. The C ABI's kv_seal
-    // wants the tokens at this point — we recover them from the
-    // server-side handle bookkeeping.
-    //
-    // For Phase M-1 we accept the limitation that the wire SealRequest
-    // doesn't carry the token list: tests Reserve+Publish, then the
-    // server's HeadlessNode already knows the tokens from the locator's
-    // prefix_hash and the original write path. Phase M-2 will either
-    // extend the proto with `repeated uint32 tokens` here or move seal
-    // bookkeeping fully server-side.
-    //
-    // Today's kv_seal signature requires the tokens. For the test we
-    // pass an empty token list — kv_seal in the loopback HeadlessNode
-    // currently treats an empty list as "use the locator's prefix path",
-    // which is what we want. If that contract changes the test will
-    // catch it.
-    int rc = kv_seal(ctx_, request->server_handle(), nullptr, 0);
+    // Phase M-2: the proto now carries the token list. We forward it
+    // straight to kv_seal as the ART path source — same shape every
+    // Python adapter uses via its connector layer.
+    std::vector<uint32_t> tokens(request->tokens().begin(),
+                                   request->tokens().end());
+    int rc = kv_seal(ctx_, request->server_handle(),
+                       tokens.empty() ? nullptr : tokens.data(),
+                       tokens.size());
     if (rc != KV_OK) return ToGrpcStatus(rc, "kv_seal");
-    response->mutable_locator();  // empty Locator; H-3 will fill in if needed
+    response->mutable_locator();  // empty Locator; Phase H-3 fills in if needed
     return ::grpc::Status::OK;
 }
 
@@ -224,12 +219,97 @@ void ToProtoLocator(const kv_locator_t& in, kvcache::proto::Locator* out) {
     return ::grpc::Status::OK;
 }
 
+// ---- Subscribe streaming (Phase M-2) -----------------------------------
+//
+// The C ABI's kv_subscribe_events drives a per-ctx poller thread that
+// fires our callback for each Add / Evict / Promote / Demote event the
+// HeadlessNode publishes. We bridge that into the gRPC stream by
+// shoving every event onto a thread-safe queue and letting the RPC
+// thread drain it via ServerWriter::Write. The RPC stays in this
+// function until the client cancels or the writer fails; on exit we
+// always unsubscribe (idempotent).
+
+namespace {
+
+// Bridge state for the duration of one Subscribe RPC. The callback
+// fires on the poller thread inside the kv_ctx_t; the gRPC thread
+// reads from this queue and writes to the wire.
+struct SubBridge {
+    std::mutex                              mu;
+    std::condition_variable                 cv;
+    std::deque<kvcache::proto::Event>       queue;
+    bool                                    closed = false;
+
+    void Push(const kv_event_t* in) {
+        kvcache::proto::Event ev;
+        // Map the C ABI's int32_t enum to proto's EventType.
+        switch (in->type) {
+            case KV_EVENT_ADD:     ev.set_type(kvcache::proto::EVENT_ADD); break;
+            case KV_EVENT_EVICT:   ev.set_type(kvcache::proto::EVENT_EVICT); break;
+            case KV_EVENT_PROMOTE: ev.set_type(kvcache::proto::EVENT_PROMOTE); break;
+            case KV_EVENT_DEMOTE:  ev.set_type(kvcache::proto::EVENT_DEMOTE); break;
+            default:               ev.set_type(kvcache::proto::EVENT_UNSPECIFIED);
+        }
+        ev.set_epoch(in->epoch);
+        // Skip Locator / Tier for the MVP — proto Event carries them
+        // but the gRPC test only needs type + epoch to verify the
+        // path works. Full mapping is mechanical and lands when a
+        // consumer actually reads those fields.
+        std::lock_guard<std::mutex> lk(mu);
+        queue.push_back(std::move(ev));
+        cv.notify_one();
+    }
+
+    // Block until an event arrives or the bridge is closed.
+    // Returns false on close (no event was produced).
+    bool Pop(kvcache::proto::Event* out,
+             std::chrono::milliseconds timeout) {
+        std::unique_lock<std::mutex> lk(mu);
+        if (!cv.wait_for(lk, timeout,
+                          [&] { return closed || !queue.empty(); })) {
+            return false;  // timeout
+        }
+        if (queue.empty()) return false;  // closed
+        *out = std::move(queue.front());
+        queue.pop_front();
+        return true;
+    }
+
+    void Close() {
+        std::lock_guard<std::mutex> lk(mu);
+        closed = true;
+        cv.notify_all();
+    }
+};
+
+void SubBridgeCallback(const kv_event_t* event, void* user) {
+    static_cast<SubBridge*>(user)->Push(event);
+}
+
+}  // namespace
+
 ::grpc::Status NodeDataServiceImpl::Subscribe(
-    ::grpc::ServerContext* /*context*/,
+    ::grpc::ServerContext* context,
     const kvcache::proto::SubscribeRequest* /*request*/,
-    ::grpc::ServerWriter<kvcache::proto::Event>* /*writer*/) {
-    return {::grpc::StatusCode::UNIMPLEMENTED,
-              "Subscribe: server-side push deferred to Phase M-2"};
+    ::grpc::ServerWriter<kvcache::proto::Event>* writer) {
+    if (!ctx_) return {::grpc::StatusCode::FAILED_PRECONDITION, "no ctx"};
+
+    SubBridge bridge;
+    const int rc = kv_subscribe_events(ctx_, &SubBridgeCallback, &bridge);
+    if (rc != KV_OK) return ToGrpcStatus(rc, "kv_subscribe_events");
+
+    // Loop until the client cancels (or Write fails). We poll with a
+    // small timeout so we can spot context cancellation responsively.
+    while (!context->IsCancelled()) {
+        kvcache::proto::Event ev;
+        if (!bridge.Pop(&ev, std::chrono::milliseconds(100))) {
+            continue;  // timeout — check cancellation, then loop
+        }
+        if (!writer->Write(ev)) break;  // client disconnected
+    }
+    bridge.Close();
+    kv_unsubscribe_events(ctx_);
+    return ::grpc::Status::OK;
 }
 
 }  // namespace kvcache::node::grpc_server
