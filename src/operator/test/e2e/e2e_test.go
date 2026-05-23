@@ -51,8 +51,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	kvcachev1alpha1 "github.com/alluxio/kvcache/operator/api/v1alpha1"
-	"github.com/alluxio/kvcache/operator/internal/controller"
+	kvcachev1alpha1 "github.com/Stephen-Pu/kvcache/operator/api/v1alpha1"
+	"github.com/Stephen-Pu/kvcache/operator/internal/controller"
 )
 
 // Setup brings up the controller-manager in-process against the kind
@@ -164,7 +164,7 @@ func sampleCluster(ns string) *kvcachev1alpha1.KVCacheCluster {
 		},
 		Spec: kvcachev1alpha1.KVCacheClusterSpec{
 			NodeReplicas: 3,
-			Image:        "ghcr.io/alluxio/kvcache:e2e",
+			Image:        "ghcr.io/stephen-pu/kvcache:e2e",
 			NixlBackend:  "tcp",
 			Tier: kvcachev1alpha1.TierSpec{
 				PinnedBytes: "1Gi",

@@ -17,7 +17,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
-	kvcachev1alpha1 "github.com/alluxio/kvcache/operator/api/v1alpha1"
+	kvcachev1alpha1 "github.com/Stephen-Pu/kvcache/operator/api/v1alpha1"
 )
 
 const (
@@ -53,14 +53,14 @@ const (
 )
 
 // labelsFor returns the canonical label set every dependent resource
-// carries. ``kvcache.alluxio.io/cluster`` is the selector used by the
+// carries. ``kvcache.io/cluster`` is the selector used by the
 // headless Service and the StatefulSet spec.
 func labelsFor(cluster *kvcachev1alpha1.KVCacheCluster) map[string]string {
 	return map[string]string{
 		"app.kubernetes.io/name":     "kvcache",
 		"app.kubernetes.io/instance": cluster.Name,
 		"app.kubernetes.io/part-of":  "kvcache",
-		"kvcache.alluxio.io/cluster": cluster.Name,
+		"kvcache.io/cluster": cluster.Name,
 	}
 }
 

@@ -35,7 +35,7 @@ type KVCacheClusterSpec struct {
 	ControlPlane *ControlPlaneSpec `json:"controlPlane,omitempty"`
 
 	// Alluxio binding for the T4 cold tier.
-	AlluxioBinding *AlluxioBinding `json:"alluxioBinding,omitempty"`
+	ColdStorageBinding *ColdStorageBinding `json:"coldStorageBinding,omitempty"`
 
 	// Extra resource requests / limits applied to node pods.
 	NodeResources corev1.ResourceRequirements `json:"nodeResources,omitempty"`
@@ -71,8 +71,8 @@ type TierSpec struct {
 	EnableCold   bool   `json:"enableCold,omitempty"`
 }
 
-type AlluxioBinding struct {
-	// Mount path of the alluxio-fuse mount on each node host.
+type ColdStorageBinding struct {
+	// Mount path of the FUSE-mounted UFS on each node host.
 	MountPath string `json:"mountPath"`
 	// Subdirectory under the mount for KV cold-tier data.
 	Subdir string `json:"subdir,omitempty"`

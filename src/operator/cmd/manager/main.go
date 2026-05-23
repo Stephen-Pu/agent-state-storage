@@ -16,8 +16,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	kvcachev1alpha1 "github.com/alluxio/kvcache/operator/api/v1alpha1"
-	"github.com/alluxio/kvcache/operator/internal/controller"
+	kvcachev1alpha1 "github.com/Stephen-Pu/kvcache/operator/api/v1alpha1"
+	"github.com/Stephen-Pu/kvcache/operator/internal/controller"
 )
 
 var (
@@ -48,7 +48,7 @@ func main() {
 		Scheme:                 scheme,
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElec,
-		LeaderElectionID:       "kvcache-operator.kvcache.alluxio.io",
+		LeaderElectionID:       "kvcache-operator.kvcache.io",
 	})
 	if err != nil {
 		setupExit("unable to start manager", err)

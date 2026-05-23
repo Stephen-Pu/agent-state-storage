@@ -18,7 +18,7 @@ syntax = "proto3";
 
 package etcdserverpb;
 
-option go_package = "github.com/alluxio/kvcache/third_party/etcdpb/etcdserverpb;etcdserverpb";
+option go_package = "github.com/Stephen-Pu/kvcache/third_party/etcdpb/etcdserverpb;etcdserverpb";
 
 import "mvccpb/kv.proto";
 

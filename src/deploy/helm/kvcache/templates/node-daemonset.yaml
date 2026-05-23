@@ -48,15 +48,15 @@ spec:
             {{- if .Values.node.tier.nvme.enabled }}
             - { name: nvme,     mountPath: /var/lib/kvcache }
             {{- end }}
-            {{- if .Values.alluxio.binding.enabled }}
-            - { name: alluxio,  mountPath: "{{ .Values.alluxio.binding.mountPath }}", mountPropagation: HostToContainer }
+            {{- if .Values.coldStorage.binding.enabled }}
+            - { name: coldufs,  mountPath: "{{ .Values.coldStorage.binding.mountPath }}", mountPropagation: HostToContainer }
             {{- end }}
       volumes:
         {{- if .Values.node.tier.nvme.enabled }}
         - name: nvme
           hostPath: { path: /var/lib/kvcache, type: DirectoryOrCreate }
         {{- end }}
-        {{- if .Values.alluxio.binding.enabled }}
-        - name: alluxio
-          hostPath: { path: "{{ .Values.alluxio.binding.mountPath }}", type: Directory }
+        {{- if .Values.coldStorage.binding.enabled }}
+        - name: coldufs
+          hostPath: { path: "{{ .Values.coldStorage.binding.mountPath }}", type: Directory }
         {{- end }}

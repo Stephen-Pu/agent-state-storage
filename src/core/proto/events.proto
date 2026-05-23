@@ -3,7 +3,7 @@
 syntax = "proto3";
 package kvcache.proto;
 
-option go_package = "github.com/alluxio/kvcache/control-plane/internal/pb";
+option go_package = "github.com/Stephen-Pu/kvcache/control-plane/internal/pb";
 
 // 64-byte Locator on the wire. Field order MUST match include/kvcache/kv_types.h.
 // We do NOT use proto bytes-of-64 because the C++ side mmaps the struct directly;

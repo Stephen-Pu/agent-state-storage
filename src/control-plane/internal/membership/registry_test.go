@@ -17,8 +17,8 @@ import (
 
 	"go.etcd.io/etcd/server/v3/embed"
 
-	myetcd "github.com/alluxio/kvcache/control-plane/internal/etcd"
-	"github.com/alluxio/kvcache/control-plane/internal/membership"
+	myetcd "github.com/Stephen-Pu/kvcache/control-plane/internal/etcd"
+	"github.com/Stephen-Pu/kvcache/control-plane/internal/membership"
 )
 
 func startEmbeddedEtcd(t *testing.T) (string, func()) {

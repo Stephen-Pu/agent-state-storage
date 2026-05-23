@@ -155,14 +155,14 @@ bool FilesystemColdTier::Exists(const DramKey& key) const {
 // ---------------------------------------------------------------------------
 
 std::unique_ptr<IColdTier> CreateColdTier(const ColdTierOptions& opts, std::string* err) {
-    if (opts.type == "fs" || opts.type == "alluxio-fuse") {
-        // alluxio-fuse is "just" a POSIX mount; same impl.
+    if (opts.type == "fs" || opts.type == "fuse-mount") {
+        // fuse-mount is "just" a POSIX mount; same impl.
         return FilesystemColdTier::Create(opts.fs, err);
     }
-    if (opts.type == "alluxio-native") {
-        // TODO(stephen): native Alluxio REST / gRPC client. For MVP we route
-        // through alluxio-fuse to keep one code path.
-        if (err) *err = "cold_tier: 'alluxio-native' backend not yet implemented";
+    if (opts.type == "native-rest") {
+        // TODO(stephen): native REST / gRPC UFS client. For MVP we route
+        // through the FUSE mount to keep one code path.
+        if (err) *err = "cold_tier: 'native-rest' backend not yet implemented";
         return nullptr;
     }
     if (err) *err = "cold_tier: unknown backend type '" + opts.type + "'";

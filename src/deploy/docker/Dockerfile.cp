@@ -8,7 +8,7 @@
 # Build context is the repo root (not this directory) so the COPY
 # expressions can reach src/. Tag convention: `kvcache/cp:e2e` for
 # local kind workflows; release builds retag to
-# `ghcr.io/alluxio/kvcache-cp:<version>`.
+# `ghcr.io/stephen-pu/kvcache-cp:<version>`.
 #
 # Build (from the repo root):
 #   docker build -f src/deploy/docker/Dockerfile.cp \

@@ -122,14 +122,14 @@ kubectl apply -f config/deploy/operator.yaml
 
 # 3. Create a cluster CR.
 kubectl apply -f - <<'YAML'
-apiVersion: kvcache.alluxio.io/v1alpha1
+apiVersion: kvcache.io/v1alpha1
 kind: KVCacheCluster
 metadata:
   name: demo
   namespace: kvcache
 spec:
   nodeReplicas: 3
-  image: ghcr.io/alluxio/kvcache:dev
+  image: ghcr.io/stephen-pu/kvcache:dev
   nixlBackend: tcp
   tier:
     pinnedBytes: 32Gi

@@ -8,7 +8,7 @@ package kvcache.proto;
 
 import "events.proto";
 
-option go_package = "github.com/alluxio/kvcache/control-plane/internal/pb";
+option go_package = "github.com/Stephen-Pu/kvcache/control-plane/internal/pb";
 
 // ============================================================================
 // KVAgent  -> Node  (data-plane control)

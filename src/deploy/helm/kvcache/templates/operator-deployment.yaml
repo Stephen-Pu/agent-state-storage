@@ -44,10 +44,10 @@ kind: ClusterRole
 metadata:
   name: {{ .Release.Name }}-operator
 rules:
-  - apiGroups: ["kvcache.alluxio.io"]
+  - apiGroups: ["kvcache.io"]
     resources: ["kvcacheclusters", "kvcachetenants"]
     verbs: ["*"]
-  - apiGroups: ["kvcache.alluxio.io"]
+  - apiGroups: ["kvcache.io"]
     resources: ["kvcacheclusters/status", "kvcachetenants/status"]
     verbs: ["get", "update", "patch"]
   - apiGroups: ["apps"]

@@ -4,9 +4,9 @@ description: KV Cache — enterprise-grade vendor-neutral KV cache data layer.
 type: application
 version: 0.1.0
 appVersion: "0.1.0"
-home: https://github.com/alluxio/kvcache
+home: https://github.com/Stephen-Pu/kvcache
 sources:
-  - https://github.com/alluxio/kvcache
+  - https://github.com/Stephen-Pu/kvcache
 keywords:
   - llm
   - inference

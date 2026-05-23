@@ -1,7 +1,7 @@
 // Package v1alpha1 contains API Schema definitions for the kvcache v1alpha1
 // API group. LLD §8.2.
 //
-// +groupName=kvcache.alluxio.io
+// +groupName=kvcache.io
 // +kubebuilder:object:generate=true
 package v1alpha1
 
@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	GroupVersion = schema.GroupVersion{Group: "kvcache.alluxio.io", Version: "v1alpha1"}
+	GroupVersion = schema.GroupVersion{Group: "kvcache.io", Version: "v1alpha1"}
 
 	SchemeBuilder = &scheme.Builder{GroupVersion: GroupVersion}
 

@@ -83,9 +83,9 @@ func (in *KVCacheClusterSpec) DeepCopyInto(out *KVCacheClusterSpec) {
 		out.ControlPlane = new(ControlPlaneSpec)
 		*out.ControlPlane = *in.ControlPlane
 	}
-	if in.AlluxioBinding != nil {
-		out.AlluxioBinding = new(AlluxioBinding)
-		*out.AlluxioBinding = *in.AlluxioBinding
+	if in.ColdStorageBinding != nil {
+		out.ColdStorageBinding = new(ColdStorageBinding)
+		*out.ColdStorageBinding = *in.ColdStorageBinding
 	}
 	in.NodeResources.DeepCopyInto(&out.NodeResources)
 }

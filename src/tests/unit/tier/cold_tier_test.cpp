@@ -80,7 +80,7 @@ TEST(FilesystemColdTierTest, GetMissingFails) {
 TEST(ColdTierFactoryTest, FsAliasWorks) {
     auto root = TmpRoot("alias");
     ColdTierOptions o;
-    o.type    = "alluxio-fuse";  // alias for fs in MVP
+    o.type    = "fuse-mount";  // alias for fs in MVP
     o.fs.root = root.string();
     std::string err;
     auto t = CreateColdTier(o, &err);
@@ -90,7 +90,7 @@ TEST(ColdTierFactoryTest, FsAliasWorks) {
 }
 
 TEST(ColdTierFactoryTest, NativeBackendNotImplemented) {
-    ColdTierOptions o; o.type = "alluxio-native";
+    ColdTierOptions o; o.type = "native-rest";
     std::string err;
     EXPECT_EQ(CreateColdTier(o, &err), nullptr);
     EXPECT_FALSE(err.empty());

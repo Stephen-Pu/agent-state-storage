@@ -30,7 +30,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	kvcachev1alpha1 "github.com/alluxio/kvcache/operator/api/v1alpha1"
+	kvcachev1alpha1 "github.com/Stephen-Pu/kvcache/operator/api/v1alpha1"
 )
 
 const (
@@ -239,7 +239,7 @@ func generateCA(clusterName string) ([]byte, []byte, error) {
 		SerialNumber: serial,
 		Subject: pkix.Name{
 			CommonName:   fmt.Sprintf("kvcache-ca-%s", clusterName),
-			Organization: []string{"kvcache.alluxio.io"},
+			Organization: []string{"kvcache.io"},
 		},
 		NotBefore:             time.Now().Add(-1 * time.Minute),
 		NotAfter:              time.Now().Add(mtlsCAValidity),

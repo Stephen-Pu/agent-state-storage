@@ -11,7 +11,7 @@ package kvcache.proto;
 // it where the shared types are used. Add the import back when cp.proto
 // itself references one of those messages.
 
-option go_package = "github.com/alluxio/kvcache/control-plane/internal/pb";
+option go_package = "github.com/Stephen-Pu/kvcache/control-plane/internal/pb";
 
 // ============================================================================
 // Node  -> CP

@@ -34,7 +34,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	kvcachev1alpha1 "github.com/alluxio/kvcache/operator/api/v1alpha1"
+	kvcachev1alpha1 "github.com/Stephen-Pu/kvcache/operator/api/v1alpha1"
 )
 
 // KVCacheTenantReconciler reconciles a KVCacheTenant object.
@@ -49,8 +49,8 @@ type KVCacheTenantReconciler struct {
 	Publisher TenantPublisher
 }
 
-// +kubebuilder:rbac:groups=kvcache.alluxio.io,resources=kvcachetenants,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=kvcache.alluxio.io,resources=kvcachetenants/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=kvcache.io,resources=kvcachetenants,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=kvcache.io,resources=kvcachetenants/status,verbs=get;update;patch
 
 const (
 	validatedConditionType = "Validated"

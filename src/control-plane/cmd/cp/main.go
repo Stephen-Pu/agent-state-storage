@@ -34,8 +34,8 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 
-	myetcd "github.com/alluxio/kvcache/control-plane/internal/etcd"
-	"github.com/alluxio/kvcache/control-plane/internal/membership"
+	myetcd "github.com/Stephen-Pu/kvcache/control-plane/internal/etcd"
+	"github.com/Stephen-Pu/kvcache/control-plane/internal/membership"
 )
 
 // Set to true once etcd is reachable; /readyz flips from 503 -> 200.

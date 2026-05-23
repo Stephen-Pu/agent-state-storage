@@ -2,7 +2,7 @@
 
 # ---- Images ----
 image:
-  registry: ghcr.io/alluxio
+  registry: ghcr.io/stephen-pu
   node:
     repository: kvstore-node
     tag: "0.1.0"
@@ -56,12 +56,12 @@ node:
     requests: { cpu: "4",   memory: "150Gi" }
     limits:   { cpu: "8",   memory: "300Gi" }
 
-# ---- Alluxio binding (T4 cold tier) ----
-alluxio:
+# ---- Cold-storage binding (T4 cold tier — pluggable UFS via FUSE mount) ----
+coldStorage:
   binding:
     enabled: false
-    # Path of the alluxio-fuse mount on each host.
-    mountPath: "/mnt/alluxio"
+    # Path of the FUSE-mounted UFS on each host.
+    mountPath: "/mnt/coldufs"
     subdir:    "kvcache"
 
 # ---- Operator ----

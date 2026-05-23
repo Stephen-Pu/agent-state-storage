@@ -7,7 +7,7 @@ syntax = "proto3";
 
 package mvccpb;
 
-option go_package = "github.com/alluxio/kvcache/third_party/etcdpb/mvccpb;mvccpb";
+option go_package = "github.com/Stephen-Pu/kvcache/third_party/etcdpb/mvccpb;mvccpb";
 
 message KeyValue {
     // Raw key bytes.

@@ -33,7 +33,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	kvcachev1alpha1 "github.com/alluxio/kvcache/operator/api/v1alpha1"
+	kvcachev1alpha1 "github.com/Stephen-Pu/kvcache/operator/api/v1alpha1"
 )
 
 func newScheme(t *testing.T) *runtime.Scheme {
@@ -52,7 +52,7 @@ func sampleCluster() *kvcachev1alpha1.KVCacheCluster {
 		},
 		Spec: kvcachev1alpha1.KVCacheClusterSpec{
 			NodeReplicas: 3,
-			Image:        "ghcr.io/alluxio/kvcache:dev",
+			Image:        "ghcr.io/stephen-pu/kvcache:dev",
 			NixlBackend:  "tcp",
 			Tier: kvcachev1alpha1.TierSpec{
 				PinnedBytes: "32Gi",
@@ -433,7 +433,7 @@ func TestReconcileEmitsControlPlane(t *testing.T) {
 func TestControlPlaneRespectsOverrides(t *testing.T) {
 	cluster := sampleCluster()
 	cluster.Spec.ControlPlane = &kvcachev1alpha1.ControlPlaneSpec{
-		Image:    "ghcr.io/alluxio/kvcache-cp:dev",
+		Image:    "ghcr.io/stephen-pu/kvcache-cp:dev",
 		Replicas: 5,
 	}
 	r, cli := newReconciler(t, cluster)

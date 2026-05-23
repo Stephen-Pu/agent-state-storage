@@ -1,18 +1,18 @@
-// LLD §3.3 T4 — Cold tier via Alluxio.
+// LLD §3.3 T4 — Cold tier via a pluggable multi-cloud UFS.
 //
 // The cold tier is the only tier that crosses cloud boundaries. We outsource
-// the multi-cloud problem to Alluxio EE — see "Vendor-Neutral / Alluxio-as-
-// Enabler" framing in HLD §2.3.
+// the multi-cloud problem to a pluggable UFS — see "Vendor-Neutral /
+// UFS-as-Enabler" framing in HLD §2.3.
 //
 // MVP integration strategy:
 //   * Abstract interface (IColdTier) — Put / Get / Delete / Exists.
 //   * Concrete `FilesystemColdTier` — backed by a directory path. This is
 //     intentionally generic: the same implementation works for
 //       (a) local disk staging (tests, dev)
-//       (b) Alluxio mounted via `alluxio-fuse` (production default)
+//       (b) a multi-cloud UFS mounted via FUSE (production default)
 //       (c) any POSIX-mounted UFS
-//   * Native Alluxio REST / gRPC client = Phase-2 (TODO(stephen)) once it
-//     proves to be needed beyond what alluxio-fuse delivers.
+//   * Native REST / gRPC UFS client = Phase-2 (TODO(stephen)) once it
+//     proves to be needed beyond what the FUSE mount delivers.
 //
 // Layout under the root directory:
 //   {root}/{first_2_hex(key)}/{rest_of_hex(key)}.kv
@@ -48,7 +48,7 @@ class IColdTier {
 };
 
 // Filesystem-backed cold tier. Works with any POSIX path — local disk,
-// alluxio-fuse mount, or another UFS mount.
+// FUSE-mounted UFS, or another UFS mount.
 class FilesystemColdTier final : public IColdTier {
    public:
     struct Options {
@@ -80,7 +80,7 @@ class FilesystemColdTier final : public IColdTier {
 
 // Factory for selecting a backend by name. Today: "fs" only.
 struct ColdTierOptions {
-    std::string                 type = "fs";  // "fs" | "alluxio-fuse" (alias of fs) | "alluxio-native" (TODO)
+    std::string                 type = "fs";  // "fs" | "fuse-mount" (alias of fs) | "native-rest" (TODO)
     FilesystemColdTier::Options fs;
 };
 std::unique_ptr<IColdTier> CreateColdTier(const ColdTierOptions& opts, std::string* err);

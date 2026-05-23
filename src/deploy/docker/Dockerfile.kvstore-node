@@ -8,7 +8,7 @@
 # Build context is the project root (NOT this directory) so the COPY
 # expressions can reach src/ and third_party/. Tag convention:
 # `kvcache/kvstore-node:e2e` for local kind workflows; release builds
-# retag to `ghcr.io/alluxio/kvcache:<version>` upstream.
+# retag to `ghcr.io/stephen-pu/kvcache:<version>` upstream.
 #
 # Build (from the repo root):
 #   docker build -f src/deploy/docker/Dockerfile.kvstore-node \

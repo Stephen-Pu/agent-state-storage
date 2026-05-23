@@ -34,7 +34,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	kvcachev1alpha1 "github.com/alluxio/kvcache/operator/api/v1alpha1"
+	kvcachev1alpha1 "github.com/Stephen-Pu/kvcache/operator/api/v1alpha1"
 )
 
 // KVCacheClusterReconciler reconciles a KVCacheCluster object.
@@ -49,8 +49,8 @@ type KVCacheClusterReconciler struct {
 	Members MemberCounter
 }
 
-// +kubebuilder:rbac:groups=kvcache.alluxio.io,resources=kvcacheclusters,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=kvcache.alluxio.io,resources=kvcacheclusters/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=kvcache.io,resources=kvcacheclusters,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=kvcache.io,resources=kvcacheclusters/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=apps,resources=statefulsets;daemonsets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=services;configmaps;secrets;serviceaccounts,verbs=get;list;watch;create;update;patch;delete
 

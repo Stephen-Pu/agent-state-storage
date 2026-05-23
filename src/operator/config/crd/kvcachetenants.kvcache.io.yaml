@@ -1,9 +1,9 @@
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
-  name: kvcachetenants.kvcache.alluxio.io
+  name: kvcachetenants.kvcache.io
 spec:
-  group: kvcache.alluxio.io
+  group: kvcache.io
   scope: Namespaced
   names:
     kind: KVCacheTenant

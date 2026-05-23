@@ -24,7 +24,7 @@ import (
 
 	clientv3 "go.etcd.io/etcd/client/v3"
 
-	myetcd "github.com/alluxio/kvcache/control-plane/internal/etcd"
+	myetcd "github.com/Stephen-Pu/kvcache/control-plane/internal/etcd"
 )
 
 const (

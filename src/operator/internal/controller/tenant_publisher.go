@@ -25,7 +25,7 @@ import (
 
 	clientv3 "go.etcd.io/etcd/client/v3"
 
-	kvcachev1alpha1 "github.com/alluxio/kvcache/operator/api/v1alpha1"
+	kvcachev1alpha1 "github.com/Stephen-Pu/kvcache/operator/api/v1alpha1"
 )
 
 // TenantPublisher writes one tenant's validated spec into the per-cluster
