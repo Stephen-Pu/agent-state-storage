@@ -3,7 +3,7 @@
 > **The data plane for the inference economy.**
 >
 > A vendor-neutral, enterprise-grade KV Cache layer for LLM inference at scale.
-> Built on NIXL · Alluxio · 6 first principles · 83 traceable design decisions.
+> Built on NIXL · 6 first principles · 83 traceable design decisions.
 
 [![CI](https://github.com/Stephen-Pu/kvcache/actions/workflows/ci.yml/badge.svg)](https://github.com/Stephen-Pu/kvcache/actions)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
@@ -81,9 +81,9 @@ A 3-queue (**P0 / P1 / P2**) PriorityScheduler with 20% / 75% / 5% bandwidth res
 ```
    ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐
    │  T0 HBM  │  │ T1 Pinned│  │  T2 DRAM │  │  T3 NVMe │  │ T4  Cold │
-   │  GPU-own │←─│ cudaHost │←─│  pageable│←─│ io_uring │←─│  Alluxio │
-   │          │  │ + NIXL MR│  │  + 2Q    │  │  / SPDK  │  │ multi-   │
-   │          │  │          │  │  + Ghost │  │  + GDS   │  │ cloud    │
+   │  GPU-own │←─│ cudaHost │←─│  pageable│←─│ io_uring │←─│ pluggable│
+   │          │  │ + NIXL MR│  │  + 2Q    │  │  / SPDK  │  │ object   │
+   │          │  │          │  │  + Ghost │  │  + GDS   │  │  UFS     │
    └──────────┘  └──────────┘  └──────────┘  └──────────┘  └──────────┘
                                                                   │
                                                                   ▼
@@ -94,7 +94,7 @@ A 3-queue (**P0 / P1 / P2**) PriorityScheduler with 20% / 75% / 5% bandwidth res
 - **2Q + Ghost Cache** in T2 — prevents scan pollution, recovers thrash
 - **GDS for tiles > 16 MB** — NVMe → GPU direct, host CPU completely idle
 - **Cross-tenant eviction** — over-quota tenants first, then descend by priority
-- **Cold tier via Alluxio EE** — no reinvented multi-cloud UFS
+- **Cold tier via a pluggable multi-cloud object UFS** — no reinvented storage layer
 
 ### 4. **The cache refuses to lose to recompute** — `D-PERF-1` runtime safety-net
 
@@ -113,7 +113,7 @@ This turns "cache will always help" — the hidden, often-wrong assumption — i
 | :-------------------- | :-------------------------------: | :--------: | :------: | :-------: | :---------------: |
 | GPU vendor lock-in    |               None               |    None    |   None   |   None    | **NVIDIA-only**   |
 | Engine lock-in        | None (vLLM / SGLang / TRT-LLM / AIBrix via one C ABI) | vLLM-only | vLLM-only | vLLM-only | NVIDIA-aligned |
-| Cloud lock-in         |        None (Alluxio multi-cloud) |     —      |  Single  |     —     |      Single       |
+| Cloud lock-in         |    None (pluggable multi-cloud UFS) |     —      |  Single  |     —     |      Single       |
 | Multi-tenant QoS      | **Hard** (3D quota + priority + RBAC + audit) | None | Soft | None | Soft |
 | Process model         |    Cross-process server-pull     | In-process | Cross-process | In-process | Cross-process |
 | Open source           |           Apache-2.0             | Apache-2.0 | Apache-2.0 | Apache-2.0 | Proprietary stack |
@@ -221,8 +221,8 @@ Expected end of `make all`:
 100% tests passed, 0 tests failed out of 210
 
 # Go (control-plane + operator)
-ok  github.com/alluxio/kvcache/control-plane/internal/membership   …
-ok  github.com/alluxio/kvcache/operator/internal/controller        …
+ok  control-plane/internal/membership   …
+ok  operator/internal/controller        …
 
 # Python adapter / E2E
 ============================== 16 passed in 0.2s ===============================
@@ -334,7 +334,7 @@ Design documents (HLD + LLD) are available to active contributors on request.
 
 ## Acknowledgments
 
-Standing on the shoulders of: **vLLM** · **SGLang** · **Mooncake** (FAST'25) · **LMCache** · **NVIDIA Dynamo** · **NIXL** · **Alluxio EE** · **3FS** / **DAOS** (architecture inspiration) · **BLAKE3** · **etcd** · **gRPC**.
+Standing on the shoulders of: **vLLM** · **SGLang** · **Mooncake** (FAST'25) · **LMCache** · **NVIDIA Dynamo** · **NIXL** · **3FS** / **DAOS** (architecture inspiration) · **BLAKE3** · **etcd** · **gRPC**.
 
 ## License
 
@@ -342,6 +342,6 @@ Standing on the shoulders of: **vLLM** · **SGLang** · **Mooncake** (FAST'25) �
 
 ---
 
-<sub>Built by [Stephen Pu](https://github.com/Stephen-Pu) (Alluxio).
+<sub>Built by [Stephen Pu](https://github.com/Stephen-Pu).
 Architecture documented across **6 first principles + 83 traceable design decisions**.
 Every commit references the decision it implements.</sub>
