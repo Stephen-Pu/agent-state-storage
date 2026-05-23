@@ -40,8 +40,16 @@ if [ -n "${E2E_IMAGE:-}" ]; then
     kind load docker-image "$E2E_IMAGE" --name "$CLUSTER_NAME"
 fi
 
+# Phase H-5: separate control-plane image. Loaded the same way so the
+# CP StatefulSet can pull it without going out to a registry.
+if [ -n "${E2E_CP_IMAGE:-}" ]; then
+    echo "==> loading $E2E_CP_IMAGE into kind cluster $CLUSTER_NAME"
+    kind load docker-image "$E2E_CP_IMAGE" --name "$CLUSTER_NAME"
+fi
+
 echo "==> running e2e tests"
 cd "$REPO_ROOT/src/operator"
-# The workload test reads E2E_IMAGE itself; export it through so the go
-# test process inherits the env.
-E2E_IMAGE="${E2E_IMAGE:-}" go test -tags=e2e -count=1 -timeout=10m ./test/e2e/...
+# The workload test reads E2E_IMAGE / E2E_CP_IMAGE itself; export through
+# so the go test process inherits the env.
+E2E_IMAGE="${E2E_IMAGE:-}" E2E_CP_IMAGE="${E2E_CP_IMAGE:-}" \
+    go test -tags=e2e -count=1 -timeout=10m ./test/e2e/...

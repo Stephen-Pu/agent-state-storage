@@ -2,23 +2,32 @@
 //
 // Boot sequence:
 //   1. Read config from env / flags (etcd endpoints, TLS material, listen addr).
-//   2. Dial etcd.
-//   3. Campaign for leadership via etcd Election (lease TTL 10 s by default).
-//   4. As leader: start the membership reconciler + bloom fan-out + config push.
-//   5. As follower: serve read-only RPCs (delegate writes to leader).
+//   2. Open the --listen TCP + HTTP socket IMMEDIATELY so the K8s readiness
+//      probe passes before we even try to dial etcd. This matters in kind /
+//      production: the in-cluster etcd StatefulSet takes a few seconds to
+//      elect a leader, and we don't want the CP pod to enter
+//      CrashLoopBackOff while we're waiting on it.
+//   3. Dial etcd in a retry loop (was: log.Fatalf — would crash the pod).
+//   4. Campaign for leadership via etcd Election (lease TTL 10 s by default).
+//   5. As leader: start the membership reconciler + bloom fan-out + config push.
+//   6. As follower: serve read-only RPCs (delegate writes to leader).
 //
 // The gRPC server surface mapping the cp.proto schema lives in
-// internal/server/ (TODO(stephen) — Step-8 once the full proto codegen is wired).
+// internal/server/ (TODO(stephen) — once the full proto codegen is wired).
 package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -29,6 +38,9 @@ import (
 	"github.com/alluxio/kvcache/control-plane/internal/membership"
 )
 
+// Set to true once etcd is reachable; /readyz flips from 503 -> 200.
+var etcdConnected atomic.Bool
+
 func main() {
 	endpoints := flag.String("etcd-endpoints", env("KVCACHE_ETCD_ENDPOINTS", "127.0.0.1:2379"),
 		"comma-separated list of etcd endpoints")
@@ -37,24 +49,42 @@ func main() {
 	keyPath := flag.String("etcd-key", env("KVCACHE_ETCD_KEY", ""), "client key")
 	leaderElectionPath := flag.String("election", "/cp/leader", "etcd path for leader election")
 	leaseTTL := flag.Int("lease-ttl", 10, "leader-election lease TTL in seconds")
+	listenAddr := flag.String("listen", env("KVCACHE_CP_LISTEN", ":7100"),
+		"address the CP gRPC/HTTP server binds (host:port; :0 = OS-picked)")
+	// Operator-emitted but currently unused — record so the log line
+	// makes the configured paths visible.
+	_ = flag.String("tls-ca", env("KVCACHE_TLS_CA", ""), "path to mTLS CA bundle (logged only)")
+	_ = flag.String("tls-cert", env("KVCACHE_TLS_CERT", ""), "path to mTLS leaf cert (logged only)")
+	_ = flag.String("tls-key", env("KVCACHE_TLS_KEY", ""), "path to mTLS leaf key (logged only)")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	cli, err := myetcd.New(myetcd.Config{
-		Endpoints:      strings.Split(*endpoints, ","),
-		DialTimeout:    5 * time.Second,
-		CAPath:         *caPath,
-		ClientCertPath: *certPath,
-		ClientKeyPath:  *keyPath,
-	})
+	// Start the listener before anything else — the K8s readiness probe
+	// is a TCPSocket check on this port (see operator resources.go).
+	httpSrv, err := startHttpServer(*listenAddr)
 	if err != nil {
-		log.Fatalf("control-plane: connect etcd: %v", err)
+		log.Fatalf("control-plane: listen %s: %v", *listenAddr, err)
+	}
+	log.Printf("control-plane: listening on %s", httpSrv.Addr)
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = httpSrv.Shutdown(shutdownCtx)
+	}()
+
+	// Retry etcd dial until it succeeds or we're asked to shut down.
+	// The pod stays Ready throughout (the listener is already open) so
+	// kubelet doesn't restart us if etcd is slow to settle.
+	cli, err := dialEtcdWithRetry(ctx, *endpoints, *caPath, *certPath, *keyPath)
+	if err != nil {
+		log.Printf("control-plane: shutting down before etcd was reachable: %v", err)
+		return
 	}
 	defer cli.Close()
-
 	log.Printf("control-plane: connected to etcd at %s", *endpoints)
+	etcdConnected.Store(true)
 
 	registry := membership.NewRegistry(cli)
 
@@ -64,6 +94,86 @@ func main() {
 
 	<-ctx.Done()
 	log.Println("control-plane: shutting down")
+}
+
+// startHttpServer binds `addr` and serves the readiness + metrics
+// endpoints. Returns the live server (with .Addr set to the resolved
+// "host:port" so :0 callers can read the OS-picked port).
+func startHttpServer(addr string) (*http.Server, error) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok\n"))
+	})
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
+		// 200 once etcd is dialed; 503 until then. K8s' default
+		// TCPSocket readiness probe ignores the body — but a
+		// human can curl this and tell whether the CP is fully up.
+		if etcdConnected.Load() {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("ready\n"))
+			return
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte("waiting on etcd\n"))
+	})
+	mux.HandleFunc("/metrics", func(w http.ResponseWriter, _ *http.Request) {
+		// Minimal Prometheus exposition body — replace with the
+		// runtime metrics registry once the CP grows one.
+		var ec int
+		if etcdConnected.Load() {
+			ec = 1
+		}
+		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+		_, _ = fmt.Fprintf(w, "kv_cp_etcd_connected %d\n", ec)
+	})
+
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+	srv := &http.Server{
+		Addr:         ln.Addr().String(),
+		Handler:      mux,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+	}
+	go func() {
+		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Printf("control-plane: http server: %v", err)
+		}
+	}()
+	return srv, nil
+}
+
+// dialEtcdWithRetry retries `myetcd.New` until it succeeds or `ctx` is
+// done. Used at boot so the CP pod stays Ready while in-cluster etcd is
+// still warming up.
+func dialEtcdWithRetry(ctx context.Context, endpoints, caPath, certPath, keyPath string) (*myetcd.Client, error) {
+	cfg := myetcd.Config{
+		Endpoints:      strings.Split(endpoints, ","),
+		DialTimeout:    5 * time.Second,
+		CAPath:         caPath,
+		ClientCertPath: certPath,
+		ClientKeyPath:  keyPath,
+	}
+	backoff := 500 * time.Millisecond
+	for ctx.Err() == nil {
+		cli, err := myetcd.New(cfg)
+		if err == nil {
+			return cli, nil
+		}
+		log.Printf("control-plane: etcd dial failed: %v (retrying in %v)", err, backoff)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(backoff):
+		}
+		if backoff < 5*time.Second {
+			backoff *= 2
+		}
+	}
+	return nil, ctx.Err()
 }
 
 func env(name, fallback string) string {
@@ -99,8 +209,8 @@ func runElection(ctx context.Context, cli *clientv3.Client, electionPath string,
 }
 
 // runLeaderDuties is the work loop that only the leader executes. Today it
-// just streams membership events as a sanity log. Step-8 will add quota
-// reconciliation and bloom-sketch fan-out.
+// just streams membership events as a sanity log. A future phase will add
+// quota reconciliation and bloom-sketch fan-out.
 func runLeaderDuties(ctx context.Context, registry *membership.Registry) {
 	events, err := registry.Watch(ctx)
 	if err != nil {

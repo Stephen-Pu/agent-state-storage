@@ -269,8 +269,16 @@ func TestRealWorkloadPodReady(t *testing.T) {
 	// liveness probe — the shape is the same.
 	cluster.Spec.NodeReplicas = 1
 	cluster.Spec.Etcd = &kvcachev1alpha1.EtcdSpec{Replicas: 1}
+
+	// Phase H-5: if a separate CP image was loaded into kind, point the
+	// CR's controlPlane.image at it. Without this the CP STS would run
+	// the kvstore-node binary with CP-shaped flags and CrashLoopBackOff.
+	cpImage := os.Getenv("E2E_CP_IMAGE")
+	if cpImage == "" {
+		cpImage = image  // legacy: same image, crash-loops as a known issue
+	}
 	cluster.Spec.ControlPlane = &kvcachev1alpha1.ControlPlaneSpec{
-		Image:    image, // reuse — the binary inside ignores `--cp-mode`
+		Image:    cpImage,
 		Replicas: 1,
 	}
 
@@ -313,6 +321,45 @@ func TestRealWorkloadPodReady(t *testing.T) {
 			}
 		}
 		t.Fatalf("kvstore-node pod never reached Ready: %v", err)
+	}
+
+	// Phase H-5: also wait for the control-plane STS, but only when
+	// a dedicated CP image was loaded into the cluster. With the
+	// kvstore-node image as the CP image the pod crash-loops by
+	// design — the gate skips the assertion in that legacy mode.
+	if os.Getenv("E2E_CP_IMAGE") != "" {
+		cpKey := types.NamespacedName{Name: "e2e-cp", Namespace: ns}
+		cpErr := pollUntil(t, 5*time.Minute, func() error {
+			var sts appsv1.StatefulSet
+			if err := c.Get(ctx, cpKey, &sts); err != nil {
+				return err
+			}
+			want := cluster.Spec.ControlPlane.Replicas
+			if sts.Status.ReadyReplicas != want {
+				return fmt.Errorf("CP ReadyReplicas=%d, want %d",
+					sts.Status.ReadyReplicas, want)
+			}
+			return nil
+		})
+		if cpErr != nil {
+			var pods corev1.PodList
+			_ = c.List(ctx, &pods, client.InNamespace(ns))
+			for _, p := range pods.Items {
+				if !strings.HasPrefix(p.Name, "e2e-cp-") {
+					continue
+				}
+				t.Logf("cp pod %s: phase=%s reason=%s",
+					p.Name, p.Status.Phase, p.Status.Reason)
+				for _, cs := range p.Status.ContainerStatuses {
+					if cs.State.Waiting != nil {
+						t.Logf("  %s waiting: %s — %s",
+							cs.Name, cs.State.Waiting.Reason,
+							cs.State.Waiting.Message)
+					}
+				}
+			}
+			t.Fatalf("control-plane pod never reached Ready: %v", cpErr)
+		}
 	}
 }
 
