@@ -164,6 +164,25 @@ std::string NodeDataServiceImpl::PrimaryFor(const std::string& tenant_id,
     return ring_->Primary(std::span<const uint8_t>(key.data(), key.size()));
 }
 
+void NodeDataServiceImpl::RememberForwardedHandle(uint64_t handle,
+                                                    std::string owner) {
+    if (!handle) return;
+    std::lock_guard<std::mutex> lk(fwd_handle_mu_);
+    forwarded_handles_[handle] = std::move(owner);
+}
+
+void NodeDataServiceImpl::ForgetForwardedHandle(uint64_t handle) {
+    std::lock_guard<std::mutex> lk(fwd_handle_mu_);
+    forwarded_handles_.erase(handle);
+}
+
+std::string NodeDataServiceImpl::ForwardOwnerForHandle(uint64_t handle) const {
+    std::lock_guard<std::mutex> lk(fwd_handle_mu_);
+    auto it = forwarded_handles_.find(handle);
+    if (it == forwarded_handles_.end()) return {};
+    return it->second;
+}
+
 std::shared_ptr<NodeDataServiceImpl::PeerStub>
 NodeDataServiceImpl::GetPeerStub(const std::string& node_id) {
     {
@@ -276,7 +295,14 @@ kv_ctx_t* NodeDataServiceImpl::CtxForHandle(uint64_t h) {
             }
             ::grpc::ClientContext fctx;
             fctx.AddMetadata(kForwardedHeader, "1");
-            return peer->stub->Lookup(&fctx, *request, response);
+            auto status = peer->stub->Lookup(&fctx, *request, response);
+            // Phase Q-2 — remember (handle → owner) so subsequent
+            // Fetch/Release on this read handle also forwards here.
+            if (status.ok() && response->hit() &&
+                response->server_handle() != 0) {
+                RememberForwardedHandle(response->server_handle(), owner);
+            }
+            return status;
         }
         // Fall through — we are the owner.
     }
@@ -311,10 +337,54 @@ kv_ctx_t* NodeDataServiceImpl::CtxForHandle(uint64_t h) {
 }
 
 ::grpc::Status NodeDataServiceImpl::Reserve(
-    ::grpc::ServerContext* /*context*/,
+    ::grpc::ServerContext* context,
     const kvcache::proto::ReserveRequest* request,
     kvcache::proto::ReserveResponse*      response) {
-    // Reserve carries identity inside the embedded Locator.
+    // Phase Q-2 — sticky-write fan-out. Reserve carries the locator
+    // (tenant_id bytes + model_id_hash + prefix_hash); compute HRW
+    // primary off those and forward when we're not the owner. The
+    // x-kvcache-forwarded metadata header guards against forward
+    // loops the same way Lookup's path does.
+    static constexpr char kForwardedHeader[] = "x-kvcache-forwarded";
+    bool already_forwarded = false;
+    if (context) {
+        const auto& md = context->client_metadata();
+        already_forwarded = md.find(kForwardedHeader) != md.end();
+    }
+    if (ring_ && !already_forwarded && !self_node_id_.empty()) {
+        // The "key bytes" mirror Lookup's encoding but use the
+        // Locator's 16-byte tenant_id (already bytes) directly + the
+        // prefix_hash (also bytes) so two writers of the same chunk
+        // land on the same owner.
+        const auto& loc = request->locator();
+        std::vector<uint8_t> key;
+        key.reserve(16 + 8 + loc.prefix_hash().size());
+        key.insert(key.end(), loc.tenant_id().begin(), loc.tenant_id().end());
+        const uint64_t mh_for_hrw = loc.model_id_hash();
+        for (int i = 0; i < 8; ++i) {
+            key.push_back(static_cast<uint8_t>((mh_for_hrw >> (i * 8)) & 0xff));
+        }
+        key.insert(key.end(),
+                    loc.prefix_hash().begin(), loc.prefix_hash().end());
+        const std::string owner = ring_->Primary(
+            std::span<const uint8_t>(key.data(), key.size()));
+        if (!owner.empty() && owner != self_node_id_) {
+            auto peer = GetPeerStub(owner);
+            if (!peer) {
+                return {::grpc::StatusCode::UNAVAILABLE,
+                         "Reserve forward: peer '" + owner + "' unreachable"};
+            }
+            ::grpc::ClientContext fctx;
+            fctx.AddMetadata(kForwardedHeader, "1");
+            auto status = peer->stub->Reserve(&fctx, *request, response);
+            if (status.ok() && response->server_handle() != 0) {
+                RememberForwardedHandle(response->server_handle(), owner);
+            }
+            return status;
+        }
+    }
+
+    // Local Reserve. Identity is inside the embedded Locator.
     const uint64_t th = HashTenantBytes16(request->locator().tenant_id());
     const uint64_t mh = request->locator().model_id_hash();
     kv_ctx_t* ctx = GetOrOpenCtx(th, mh);
@@ -356,9 +426,22 @@ kv_ctx_t* NodeDataServiceImpl::CtxForHandle(uint64_t h) {
 }
 
 ::grpc::Status NodeDataServiceImpl::Publish(
-    ::grpc::ServerContext* /*context*/,
+    ::grpc::ServerContext* context,
     const kvcache::proto::PublishRequest* request,
     kvcache::proto::PublishResponse*      response) {
+    // Phase Q-2 — if this handle was minted on a peer via a forwarded
+    // Reserve, route Publish to the same peer.
+    if (const std::string owner =
+            ForwardOwnerForHandle(request->server_handle());
+        !owner.empty() && owner != self_node_id_) {
+        auto peer = GetPeerStub(owner);
+        if (!peer) return {::grpc::StatusCode::UNAVAILABLE,
+                            "Publish forward: peer '" + owner + "' down"};
+        ::grpc::ClientContext fctx;
+        fctx.AddMetadata("x-kvcache-forwarded", "1");
+        return peer->stub->Publish(&fctx, *request, response);
+    }
+    (void)context;
     kv_ctx_t* ctx = CtxForHandle(request->server_handle());
     if (!ctx) return {::grpc::StatusCode::FAILED_PRECONDITION, "no ctx"};
     // Send an empty buffer descriptor since the caller has already
@@ -372,9 +455,20 @@ kv_ctx_t* NodeDataServiceImpl::CtxForHandle(uint64_t h) {
 }
 
 ::grpc::Status NodeDataServiceImpl::Fetch(
-    ::grpc::ServerContext* /*context*/,
+    ::grpc::ServerContext* context,
     const kvcache::proto::FetchRequest* request,
     kvcache::proto::FetchResponse*      response) {
+    if (const std::string owner =
+            ForwardOwnerForHandle(request->server_handle());
+        !owner.empty() && owner != self_node_id_) {
+        auto peer = GetPeerStub(owner);
+        if (!peer) return {::grpc::StatusCode::UNAVAILABLE,
+                            "Fetch forward: peer '" + owner + "' down"};
+        ::grpc::ClientContext fctx;
+        fctx.AddMetadata("x-kvcache-forwarded", "1");
+        return peer->stub->Fetch(&fctx, *request, response);
+    }
+    (void)context;
     kv_ctx_t* ctx = CtxForHandle(request->server_handle());
     if (!ctx) return {::grpc::StatusCode::FAILED_PRECONDITION, "no ctx"};
     kv_buffer_desc_t dst{};
@@ -427,6 +521,16 @@ kv_ctx_t* NodeDataServiceImpl::CtxForHandle(uint64_t h) {
     ::grpc::ServerContext* /*context*/,
     const kvcache::proto::SealRequest* request,
     kvcache::proto::SealResponse*      response) {
+    if (const std::string owner =
+            ForwardOwnerForHandle(request->server_handle());
+        !owner.empty() && owner != self_node_id_) {
+        auto peer = GetPeerStub(owner);
+        if (!peer) return {::grpc::StatusCode::UNAVAILABLE,
+                            "Seal forward: peer '" + owner + "' down"};
+        ::grpc::ClientContext fctx;
+        fctx.AddMetadata("x-kvcache-forwarded", "1");
+        return peer->stub->Seal(&fctx, *request, response);
+    }
     kv_ctx_t* ctx = CtxForHandle(request->server_handle());
     if (!ctx) return {::grpc::StatusCode::FAILED_PRECONDITION, "no ctx"};
     // Phase M-2: the proto now carries the token list. We forward it
@@ -445,7 +549,19 @@ kv_ctx_t* NodeDataServiceImpl::CtxForHandle(uint64_t h) {
 ::grpc::Status NodeDataServiceImpl::Release(
     ::grpc::ServerContext* /*context*/,
     const kvcache::proto::ReleaseRequest* request,
-    kvcache::proto::ReleaseResponse*      /*response*/) {
+    kvcache::proto::ReleaseResponse*      response) {
+    if (const std::string owner =
+            ForwardOwnerForHandle(request->server_handle());
+        !owner.empty() && owner != self_node_id_) {
+        auto peer = GetPeerStub(owner);
+        if (!peer) return {::grpc::StatusCode::UNAVAILABLE,
+                            "Release forward: peer '" + owner + "' down"};
+        ::grpc::ClientContext fctx;
+        fctx.AddMetadata("x-kvcache-forwarded", "1");
+        auto status = peer->stub->Release(&fctx, *request, response);
+        if (status.ok()) ForgetForwardedHandle(request->server_handle());
+        return status;
+    }
     kv_ctx_t* ctx = CtxForHandle(request->server_handle());
     if (!ctx) return {::grpc::StatusCode::FAILED_PRECONDITION, "no ctx"};
     int rc = kv_release(ctx, request->server_handle());

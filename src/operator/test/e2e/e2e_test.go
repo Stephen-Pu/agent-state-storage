@@ -265,9 +265,11 @@ func TestRealWorkloadPodReady(t *testing.T) {
 	cluster.Spec.Image = image
 	// kind's default control-plane node has limited CPU/memory; the
 	// default 3-replica STS + 3-replica etcd + 3-replica CP exceeds
-	// what fits without tuning. Shrink to 1 each for the workload
-	// liveness probe — the shape is the same.
-	cluster.Spec.NodeReplicas = 1
+	// what fits without tuning. Shrink to fit while still exercising
+	// the Q-1/Q-2 fan-out wiring: NodeReplicas=2 so we get a real
+	// multi-node etcd registration (both pods PUT /kvcache/nodes/<id>
+	// and HRW Primary() can route).
+	cluster.Spec.NodeReplicas = 2
 	cluster.Spec.Etcd = &kvcachev1alpha1.EtcdSpec{Replicas: 1}
 
 	// Phase H-5: if a separate CP image was loaded into kind, point the

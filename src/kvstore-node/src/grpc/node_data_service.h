@@ -141,6 +141,20 @@ class NodeDataServiceImpl final : public kvcache::proto::NodeData::Service {
     mutable std::mutex                                            stub_mu_;
     std::unordered_map<std::string, std::shared_ptr<PeerStub>>    stubs_;
 
+    // Phase Q-2 — sticky-writes. When Reserve/Lookup forwards to an
+    // owner and the owner returns a handle, we record (handle →
+    // owner_node_id) so subsequent Publish/Fetch/Seal/Release on the
+    // same handle land on the same owner. Client assumption: a logical
+    // session sticks to a single forwarder between Reserve and
+    // Release; if a client switches nodes mid-session the second node
+    // will try to serve handle-based RPCs locally and fail.
+    mutable std::mutex                                  fwd_handle_mu_;
+    std::unordered_map<uint64_t, std::string>           forwarded_handles_;
+
+    void RememberForwardedHandle(uint64_t handle, std::string owner);
+    void ForgetForwardedHandle(uint64_t handle);
+    std::string ForwardOwnerForHandle(uint64_t handle) const;
+
     // Resolve a key (tenant_id + model_id_hash + tokens) -> primary
     // node id under the current HRW snapshot. Empty if ring/directory
     // are absent.

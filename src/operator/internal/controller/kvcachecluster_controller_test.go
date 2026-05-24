@@ -141,6 +141,49 @@ func TestStatefulSetCarriesSpec(t *testing.T) {
 	}
 }
 
+// Phase Q-2 — verify kvstore-node StatefulSet args wire through the
+// node identity + etcd endpoints flags via the K8s $(ENV) substitution
+// pattern. main.cpp only flips on Lookup/Reserve fan-out when all
+// three flags are non-empty, so missing one would silently fall back
+// to single-node mode in the pod.
+func TestStatefulSetWiresFanOutFlags(t *testing.T) {
+	cluster := sampleCluster()
+	cluster.Spec.NodeReplicas = 2
+	r, cli := newReconciler(t, cluster)
+	reconcileOnce(t, r, cluster)
+
+	var sts appsv1.StatefulSet
+	if err := cli.Get(context.Background(),
+		client.ObjectKey{Name: childName(cluster.Name, "nodes"), Namespace: cluster.Namespace}, &sts); err != nil {
+		t.Fatalf("StatefulSet not found: %v", err)
+	}
+	if sts.Spec.Replicas == nil || *sts.Spec.Replicas != 2 {
+		t.Fatalf("replicas = %v, want 2", sts.Spec.Replicas)
+	}
+	args := strings.Join(sts.Spec.Template.Spec.Containers[0].Args, " ")
+	for _, want := range []string{
+		"--node-id $(KVCACHE_NODE_NAME)",
+		"--advertise-host $(KVCACHE_POD_IP)",
+		"--etcd-endpoints",
+	} {
+		if !strings.Contains(args, want) {
+			t.Errorf("args missing %q; got: %s", want, args)
+		}
+	}
+	// $(VAR) substitution requires the env var to be declared in the
+	// same container — verify both are present.
+	envNames := map[string]bool{}
+	for _, e := range sts.Spec.Template.Spec.Containers[0].Env {
+		envNames[e.Name] = true
+	}
+	for _, want := range []string{"KVCACHE_NODE_NAME", "KVCACHE_POD_IP"} {
+		if !envNames[want] {
+			t.Errorf("env %q not declared on container; $(%s) wouldn't substitute",
+				want, want)
+		}
+	}
+}
+
 func TestStatefulSetSkipsPVCWhenNoNvme(t *testing.T) {
 	cluster := sampleCluster()
 	cluster.Spec.Tier.NvmePath = ""
