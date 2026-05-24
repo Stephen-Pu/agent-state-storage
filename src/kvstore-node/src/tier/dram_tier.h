@@ -29,6 +29,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <list>
 #include <memory>
 #include <mutex>
@@ -58,9 +59,17 @@ struct DramKeyHash {
 
 class DramTier {
    public:
+    // Phase G-1 — called synchronously inside EvictToFit when bytes get
+    // dropped from A1in or Am. The DramTier mutex is HELD during the
+    // call, so the callback must NOT call back into the tier (Insert /
+    // Lookup will deadlock) — its job is to update upstream state (ART
+    // leaf removal, KV_EVENT_EVICT publication) only.
+    using OnEvictFn = std::function<void(const DramKey&)>;
+
     struct Options {
-        uint64_t capacity_bytes      = 16ull << 30;  // 16 GiB default
-        uint32_t a1out_max_entries   = 200000;       // ghost queue, key-only
+        uint64_t  capacity_bytes      = 16ull << 30;  // 16 GiB default
+        uint32_t  a1out_max_entries   = 200000;       // ghost queue, key-only
+        OnEvictFn on_evict;                           // optional
     };
 
     explicit DramTier(const Options& opts);
@@ -127,6 +136,8 @@ class DramTier {
 
     uint64_t a1in_bytes_used_  = 0;
     uint64_t am_bytes_used_    = 0;
+
+    OnEvictFn on_evict_;
 };
 
 }  // namespace kvcache::node::tier

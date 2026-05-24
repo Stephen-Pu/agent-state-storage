@@ -72,6 +72,12 @@ bool HeadlessNode::Init(const Options& opts, std::string* err) {
                 return backend_raw->RegisterRegion(base, bytes, &err);
             };
     }
+    // Phase G-1 — bridge DramTier evictions to ART-leaf pruning +
+    // KV_EVENT_EVICT publication.
+    if (!tier_opts.dram.on_evict) {
+        tier_opts.dram.on_evict =
+            [this](const node::tier::DramKey& k) { this->OnDramEvict(k); };
+    }
     tm_ = node::tier::TierManager::Create(tier_opts, err);
     if (!tm_) return false;
 
@@ -355,6 +361,15 @@ int HeadlessNode::Seal(kv_handle_t handle,
     req.chunk_path             = chunk_path;
     req.tier_residency_bitmap  = 1u << 3;  // DRAM bit
 
+    // Phase G-1 — remember the (DramKey -> chunk_path) mapping so the
+    // tier-side evictor can prune the matching ART leaf when these
+    // bytes get evicted. Recorded eagerly under our own lock; both
+    // headless branches below feed the same map.
+    {
+        std::lock_guard lk(mu_evict_);
+        evict_index_[LocatorContentKey(st.locator)] = chunk_path;
+    }
+
     // The SealCommitter requires RocksDB; in headless mode we may not have
     // it, so wire a no-op short-circuit when rocks_ is null.
     if (!rocks_) {
@@ -479,6 +494,50 @@ void HeadlessNode::UnsubscribeEvents(SubscriptionId id) {
     taken->stop.store(true, std::memory_order_release);
     if (taken->poller.joinable()) taken->poller.join();
     if (events_) events_->Unsubscribe(taken->ring_handle);
+}
+
+// ---------------------------------------------------------------------------
+// DRAM-eviction bridge (Phase G-1)
+// ---------------------------------------------------------------------------
+//
+// Fires synchronously inside DramTier::EvictToFit (DramTier's mutex is
+// held when we run). Constraints: NEVER touch tm_ again from here —
+// that would deadlock. ART writes are independent and safe.
+void HeadlessNode::OnDramEvict(const node::tier::DramKey& key) {
+    // 1) Resolve DramKey -> chunk_path under the local map mutex,
+    //    then drop the lock before touching ART / events.
+    std::vector<node::prefix::ChunkHash> path;
+    kv_locator_t loc{};
+    {
+        std::lock_guard lk(mu_evict_);
+        auto it = evict_index_.find(key);
+        if (it == evict_index_.end()) return;  // unknown — nothing to prune
+        path = std::move(it->second);
+        evict_index_.erase(it);
+    }
+    if (path.empty()) return;
+
+    // 2) Remove the leaf from ART. If readers are mid-Lookup they
+    //    stay valid via the epoch guard; the leaf is reclaimed when
+    //    the last reader exits. We don't peek the leaf for its
+    //    locator first because the only public ART read API is
+    //    LongestPrefixMatch (over token-derived chunks), and adding
+    //    an exact-path-peek to ArtIndex just for the EVICT event is
+    //    scope creep — subscribers can correlate via the chunk path.
+    bool removed = art_wal_
+        ? art_wal_->Remove({path.data(), path.size()})
+        : art_->Remove({path.data(), path.size()});
+    if (!removed) return;
+
+    // 3) Publish an Evict event so subscribers (gRPC Subscribe
+    //    stream, in-process callbacks) see the cache miss happen.
+    if (events_) {
+        node::prefix::Event ev{};
+        ev.type    = node::prefix::EventType::Evict;
+        ev.tier    = node::prefix::Tier::Dram;
+        ev.locator = loc;
+        events_->Publish(ev);
+    }
 }
 
 }  // namespace kvcache::abi

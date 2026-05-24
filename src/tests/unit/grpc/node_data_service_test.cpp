@@ -407,6 +407,106 @@ TEST_F(NodeDataFixture, FetchHonoursPreRegisteredDstMrKey) {
     EXPECT_EQ(kv_unregister_local_mr(ctx_, dst_key), KV_OK);
 }
 
+// Phase G-1 — A1in's capacity is 25% of DRAM (16 MiB of 64 MiB by
+// default), so the 5th 4 MiB seal pushes the oldest one out into the
+// ghost queue. That eviction fires the OnDramEvict callback wired in
+// HeadlessNode::Init, which must prune the canary's ART leaf so a
+// subsequent Lookup misses.
+//
+// A larger seal-count would let us exercise Am-tail eviction too,
+// but the MVP ART (`art_index.cpp`) has a documented "leaves are
+// terminal" limitation that surfaces as kPathConflict once root-slot
+// (first-byte-of-hash) collisions occur — distinct from anything
+// G-1 introduced. We keep the count low to avoid that pre-existing
+// edge.
+TEST_F(NodeDataFixture, DramEvictionPrunesArtLeaf) {
+    // Slot pool is 32 MiB with 4 MiB slots = 8 slots; DRAM is 64 MiB
+    // with A1in budget = 16 MiB. The canary + 4 follow-up seals at
+    // 4 MiB each overrun A1in and evict the canary.
+    constexpr std::size_t kBytesPerSeal = 4ull << 20;   // 4 MiB
+    constexpr int         kSeals        = 4;
+
+    // Local locator builder with a stronger prefix-hash spread than the
+    // test-fixture default — the fixture's xor-by-byte-position mixing
+    // produces colliding prefix_hashes for close-together token ranges,
+    // which DramTier collapses to a single key (replace-in-place) and
+    // no eviction ever fires.
+    auto build_loc = [&](uint32_t lo, std::size_t bytes_total) {
+        auto tokens = RangeTokens(lo, 2 * kChunkTokens);
+        auto loc    = BuildLocator(tenant_id_, model_id_, tokens, bytes_total);
+        // Overwrite prefix_hash with a 16-byte FNV-style spread of `lo`.
+        std::string ph(16, '\0');
+        uint64_t h = 0xcbf29ce484222325ULL ^ static_cast<uint64_t>(lo);
+        for (int i = 0; i < 16; ++i) {
+            h *= 0x100000001b3ULL;
+            ph[i] = static_cast<char>((h >> (8 * (i & 7))) & 0xff);
+        }
+        loc.set_prefix_hash(ph);
+        return loc;
+    };
+
+    auto seal_prefix = [&](uint32_t lo) -> std::string {
+        const auto tokens = RangeTokens(lo, 2 * kChunkTokens);
+        ::grpc::ClientContext rctx;
+        kvcache::proto::ReserveRequest rreq;
+        *rreq.mutable_locator() = build_loc(lo, kBytesPerSeal);
+        rreq.set_bytes(kBytesPerSeal);
+        kvcache::proto::ReserveResponse rresp;
+        auto s = stub_->Reserve(&rctx, rreq, &rresp);
+        if (!s.ok()) return s.error_message();
+
+        auto* slot = reinterpret_cast<uint8_t*>(rresp.slot_iova());
+        std::memset(slot, static_cast<int>(lo & 0xff), kBytesPerSeal);
+
+        ::grpc::ClientContext pctx;
+        kvcache::proto::PublishRequest preq;
+        preq.set_server_handle(rresp.server_handle());
+        preq.set_watermark(kBytesPerSeal);
+        kvcache::proto::PublishResponse presp;
+        s = stub_->Publish(&pctx, preq, &presp);
+        if (!s.ok()) return s.error_message();
+
+        ::grpc::ClientContext sctx;
+        kvcache::proto::SealRequest sreq;
+        sreq.set_server_handle(rresp.server_handle());
+        for (uint32_t t : tokens) sreq.add_tokens(t);
+        kvcache::proto::SealResponse sresp;
+        s = stub_->Seal(&sctx, sreq, &sresp);
+        if (!s.ok()) return s.error_message();
+        return {};
+    };
+
+    auto lookup_hits = [&](uint32_t lo) -> bool {
+        ::grpc::ClientContext lctx;
+        kvcache::proto::LookupRequest lreq;
+        lreq.set_tenant_id(tenant_id_);
+        for (uint32_t t : RangeTokens(lo, 2 * kChunkTokens)) lreq.add_tokens(t);
+        kvcache::proto::LookupResponse lresp;
+        if (!stub_->Lookup(&lctx, lreq, &lresp).ok()) return false;
+        return lresp.hit();
+    };
+
+    // Seal the canary first; it's the LRU victim and should be the
+    // one that gets pruned when DRAM overflows.
+    const uint32_t canary_lo = 60000;
+    ASSERT_EQ(seal_prefix(canary_lo), "");
+    ASSERT_TRUE(lookup_hits(canary_lo)) << "canary should be present after seal";
+
+    // Now seal 16 more distinct prefixes — each adds 4 MiB to DRAM.
+    // The canary's bytes (and possibly its ART leaf) get evicted once
+    // DRAM crosses capacity.
+    for (int i = 1; i <= kSeals; ++i) {
+        const uint32_t lo = 60000 + static_cast<uint32_t>(i) * 1000;
+        ASSERT_EQ(seal_prefix(lo), "") << "seal #" << i << " failed";
+    }
+
+    // The canary's leaf should have been removed from ART by the
+    // DRAM-eviction → ART-prune bridge — Lookup misses.
+    EXPECT_FALSE(lookup_hits(canary_lo))
+        << "canary still in ART after enough seals to overflow DRAM — "
+           "G-1 prune callback did not fire";
+}
+
 TEST(KvAbiM3, OpenFromHashesAndMrRoundTrip) {
     kv_ctx_t* ctx = nullptr;
     ASSERT_EQ(kv_ctx_open_from_hashes(KVCACHE_ABI_VERSION,

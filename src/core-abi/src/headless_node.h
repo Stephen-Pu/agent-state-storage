@@ -162,6 +162,32 @@ class HeadlessNode {
     mutable std::mutex                                            sub_mu_;
     std::unordered_map<SubscriptionId, std::unique_ptr<EventSub>> subs_;
     std::atomic<SubscriptionId>                                   next_sub_{1};
+
+    // ----- DRAM-eviction → ART-prune bridge (Phase G-1) -----
+    //
+    // At Seal time we remember the (DramKey -> chunk_path) mapping for
+    // every leaf inserted into ART. When DramTier evicts bytes for a
+    // key, the callback consults this map, removes the corresponding
+    // leaf from ART (so future Lookups miss instead of hitting on a
+    // dead pointer), and publishes a KV_EVENT_EVICT.
+    //
+    // Refcount semantics: leaves carry an initial Acquire() at Seal,
+    // representing the ART-owned reference. The callback decrements
+    // that ref before removing — if other holders are still in flight
+    // (refcount > 1), the removal is skipped and the leaf becomes a
+    // "Lookup hits, Fetch misses" zombie until the next eviction
+    // round retries it (Phase G-2 will add a sweeper).
+    struct DramKeyHasher {
+        std::size_t operator()(const node::tier::DramKey& k) const noexcept {
+            return node::tier::DramKeyHash{}(k);
+        }
+    };
+    mutable std::mutex                                                mu_evict_;
+    std::unordered_map<node::tier::DramKey,
+                       std::vector<node::prefix::ChunkHash>,
+                       DramKeyHasher>                                 evict_index_;
+
+    void OnDramEvict(const node::tier::DramKey& key);
 };
 
 }  // namespace kvcache::abi

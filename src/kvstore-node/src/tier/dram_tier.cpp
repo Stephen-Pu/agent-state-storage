@@ -8,7 +8,8 @@ namespace kvcache::node::tier {
 DramTier::DramTier(const Options& opts)
     : capacity_bytes_(opts.capacity_bytes),
       a1in_capacity_(opts.capacity_bytes / 4),
-      a1out_max_   (opts.a1out_max_entries) {}
+      a1out_max_   (opts.a1out_max_entries),
+      on_evict_    (opts.on_evict) {}
 
 DramTier::~DramTier() = default;
 
@@ -131,25 +132,31 @@ void DramTier::EvictToFit(std::size_t incoming_bytes) {
            a1in_bytes_used_ + incoming_bytes > a1in_capacity_) {
         // Evict the FIFO tail of A1in into the ghost queue.
         const Entry& victim = a1in_.back();
+        const DramKey evicted_key = victim.key;
         a1in_bytes_used_ -= victim.data.size();
         GhostInsert(victim.key);
         index_.erase(victim.key);
         a1in_.pop_back();
+        if (on_evict_) on_evict_(evicted_key);
     }
     // Now ensure overall capacity is honored. Prefer evicting from Am tail
     // (true LRU) once A1in is at its budget.
     while (a1in_bytes_used_ + am_bytes_used_ + incoming_bytes > capacity_bytes_) {
         if (!am_.empty()) {
             const Entry& victim = am_.back();
+            const DramKey evicted_key = victim.key;
             am_bytes_used_ -= victim.data.size();
             index_.erase(victim.key);
             am_.pop_back();
+            if (on_evict_) on_evict_(evicted_key);
         } else if (!a1in_.empty()) {
             const Entry& victim = a1in_.back();
+            const DramKey evicted_key = victim.key;
             a1in_bytes_used_ -= victim.data.size();
             GhostInsert(victim.key);
             index_.erase(victim.key);
             a1in_.pop_back();
+            if (on_evict_) on_evict_(evicted_key);
         } else {
             break;  // nothing left to evict
         }
