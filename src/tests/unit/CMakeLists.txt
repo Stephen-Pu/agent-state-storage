@@ -47,6 +47,8 @@ set(NODE_CLUSTER_SRCS
     ${KVCACHE_NODE_SRC}/cluster/etcd_client.cpp
     ${KVCACHE_NODE_SRC}/cluster/http_etcd_client.cpp
     ${KVCACHE_NODE_SRC}/cluster/membership_fsm.cpp
+    ${KVCACHE_NODE_SRC}/cluster/node_registrar.cpp
+    ${KVCACHE_NODE_SRC}/cluster/node_directory.cpp
 )
 
 set(NODE_ROUTING_SRCS
@@ -117,19 +119,26 @@ kvcache_add_test(test_nixl_wrapper      transport/nixl_wrapper_test.cpp      ${N
 kvcache_add_test(test_priority_scheduler transport/priority_scheduler_test.cpp ${NODE_TRANSPORT_SRCS})
 kvcache_add_test(test_tcp_backend       transport/tcp_backend_test.cpp       ${NODE_TRANSPORT_SRCS})
 
-kvcache_add_test(test_etcd_client       cluster/etcd_client_test.cpp         ${NODE_CLUSTER_SRCS})
+kvcache_add_test(test_etcd_client       cluster/etcd_client_test.cpp         ${NODE_CLUSTER_SRCS} ${NODE_ROUTING_SRCS})
 target_link_libraries(test_etcd_client PRIVATE CURL::libcurl nlohmann_json::nlohmann_json)
-kvcache_add_test(test_membership_fsm    cluster/membership_fsm_test.cpp      ${NODE_CLUSTER_SRCS})
+kvcache_add_test(test_membership_fsm    cluster/membership_fsm_test.cpp      ${NODE_CLUSTER_SRCS} ${NODE_ROUTING_SRCS})
 target_link_libraries(test_membership_fsm PRIVATE CURL::libcurl nlohmann_json::nlohmann_json)
-kvcache_add_test(test_http_etcd_client  cluster/http_etcd_client_test.cpp    ${NODE_CLUSTER_SRCS})
+kvcache_add_test(test_http_etcd_client  cluster/http_etcd_client_test.cpp    ${NODE_CLUSTER_SRCS} ${NODE_ROUTING_SRCS})
 target_link_libraries(test_http_etcd_client PRIVATE CURL::libcurl nlohmann_json::nlohmann_json)
-kvcache_add_test(test_grpc_etcd_client  cluster/grpc_etcd_client_test.cpp    ${NODE_CLUSTER_SRCS})
+kvcache_add_test(test_grpc_etcd_client  cluster/grpc_etcd_client_test.cpp    ${NODE_CLUSTER_SRCS} ${NODE_ROUTING_SRCS})
 target_link_libraries(test_grpc_etcd_client PRIVATE CURL::libcurl nlohmann_json::nlohmann_json)
 if(KVCACHE_HAVE_GRPC)
     target_link_libraries(test_grpc_etcd_client PRIVATE kvcache_etcd_proto)
     target_compile_definitions(test_grpc_etcd_client PRIVATE KVCACHE_HAVE_GRPC=1)
 endif()
 kvcache_add_test(test_hrw               routing/hrw_test.cpp                 ${NODE_ROUTING_SRCS})
+
+# Phase Q-1: NodeRegistrar + NodeDirectory cooperate to publish + observe
+# /kvcache/nodes/ entries on etcd. The test fixture uses InMemoryEtcdClient,
+# so the binary links cluster + routing TUs (no libcurl needed).
+kvcache_add_test(test_node_registry     cluster/node_registry_test.cpp
+                  ${NODE_CLUSTER_SRCS} ${NODE_ROUTING_SRCS})
+target_link_libraries(test_node_registry PRIVATE CURL::libcurl nlohmann_json::nlohmann_json)
 kvcache_add_test(test_bloom_sketch      routing/bloom_sketch_test.cpp        ${NODE_ROUTING_SRCS})
 
 kvcache_add_test(test_quota             qos/quota_test.cpp                   ${NODE_QOS_SRCS})
@@ -161,6 +170,18 @@ if(KVCACHE_HAVE_GRPC)
     target_link_libraries(test_grpc_server_tls PRIVATE
         kvstore_node_grpc
         kvcache
+    )
+
+    # Phase Q-1: cross-node Lookup fan-out via real gRPC + in-memory
+    # etcd. Stands up two NodeDataService instances in-process, both
+    # registered with the directory; verifies non-primary forwards.
+    kvcache_add_test(test_lookup_forwarding
+                      grpc/lookup_forwarding_test.cpp)
+    target_link_libraries(test_lookup_forwarding PRIVATE
+        kvstore_node_grpc
+        kvcache
+        CURL::libcurl
+        nlohmann_json::nlohmann_json
     )
 
     # Phase M-4: cross-process Pull e2e. Lives in its own binary so the

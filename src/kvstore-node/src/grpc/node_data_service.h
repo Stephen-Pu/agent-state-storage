@@ -37,10 +37,14 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <unordered_map>
 
 #include "kvcache/kv_abi.h"
 #include "node.grpc.pb.h"
+
+namespace kvcache::node::cluster { class NodeDirectory; }
+namespace kvcache::node::routing { class HrwRing; }
 
 namespace kvcache::node::grpc_server {
 
@@ -54,6 +58,16 @@ class NodeDataServiceImpl final : public kvcache::proto::NodeData::Service {
         : default_ctx_(default_ctx) {}
 
     ~NodeDataServiceImpl() override;
+
+    // Phase Q-1 — enable cross-node Lookup fan-out. The service holds
+    // non-owning pointers to the HrwRing (decides primary for a key)
+    // and NodeDirectory (resolves node_id -> dial target). The
+    // self_node_id MUST match the registrar's node_id so handlers can
+    // short-circuit the "I am the owner" case. When unset, fan-out is
+    // disabled and every Lookup is served locally (single-node mode).
+    void EnableForwarding(std::string             self_node_id,
+                          routing::HrwRing*       ring,
+                          cluster::NodeDirectory* directory);
 
     ::grpc::Status Lookup(::grpc::ServerContext*               context,
                             const kvcache::proto::LookupRequest* request,
@@ -114,6 +128,29 @@ class NodeDataServiceImpl final : public kvcache::proto::NodeData::Service {
     mutable std::mutex                       mu_;
     std::unordered_map<uint64_t, kv_ctx_t*>  cache_;        // owned ctxs
     std::unordered_map<uint64_t, kv_ctx_t*>  handle_to_ctx_;
+
+    // Forwarding state — populated by EnableForwarding. All three are
+    // either all set (fan-out enabled) or all empty/null (local-only).
+    std::string                              self_node_id_;
+    routing::HrwRing*                        ring_      = nullptr;
+    cluster::NodeDirectory*                  directory_ = nullptr;
+
+    // Per-peer NodeData stub cache. The Channel keeps itself reusable
+    // across RPCs; the stub is light-weight on top.
+    struct PeerStub;
+    mutable std::mutex                                            stub_mu_;
+    std::unordered_map<std::string, std::shared_ptr<PeerStub>>    stubs_;
+
+    // Resolve a key (tenant_id + model_id_hash + tokens) -> primary
+    // node id under the current HRW snapshot. Empty if ring/directory
+    // are absent.
+    std::string PrimaryFor(const std::string& tenant_id,
+                            uint64_t           model_id_hash,
+                            const std::string& tokens_bytes) const;
+
+    // Get-or-create the cached gRPC stub for `node_id`. Returns nullptr
+    // on dial failure or unknown node.
+    std::shared_ptr<PeerStub> GetPeerStub(const std::string& node_id);
 };
 
 }  // namespace kvcache::node::grpc_server

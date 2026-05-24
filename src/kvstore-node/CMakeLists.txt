@@ -40,6 +40,8 @@ set(NODE_CORE_SRCS
     src/cluster/etcd_client.cpp
     src/cluster/http_etcd_client.cpp
     src/cluster/membership_fsm.cpp
+    src/cluster/node_registrar.cpp
+    src/cluster/node_directory.cpp
     # routing
     src/routing/hrw.cpp
     src/routing/bloom_sketch.cpp
@@ -91,6 +93,10 @@ if(KVCACHE_HAVE_GRPC)
         PUBLIC
             kvcache_proto
             gRPC::grpc++
+            # Phase Q-1: NodeDataServiceImpl references HrwRing +
+            # NodeDirectory for cross-node Lookup fan-out; both live
+            # inside kvstore_node_core.
+            kvstore_node_core
     )
 endif()
 

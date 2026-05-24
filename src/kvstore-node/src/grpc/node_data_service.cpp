@@ -12,6 +12,8 @@
 // so test failures look identical whether you go through the wire or not.
 #include "grpc/node_data_service.h"
 
+#include <grpcpp/grpcpp.h>
+
 #include <chrono>
 #include <condition_variable>
 #include <cstring>
@@ -20,8 +22,10 @@
 #include <string>
 #include <vector>
 
+#include "cluster/node_directory.h"
 #include "kvcache/kv_errors.h"
 #include "kvcache/kv_types.h"
+#include "routing/hrw.h"
 
 namespace kvcache::node::grpc_server {
 
@@ -119,6 +123,12 @@ void ToProtoLocator(const kv_locator_t& in, kvcache::proto::Locator* out) {
 
 }  // namespace
 
+// Phase Q-1 — per-peer stub cache entry.
+struct NodeDataServiceImpl::PeerStub {
+    std::shared_ptr<::grpc::Channel>             channel;
+    std::unique_ptr<kvcache::proto::NodeData::Stub> stub;
+};
+
 NodeDataServiceImpl::~NodeDataServiceImpl() {
     std::lock_guard<std::mutex> lk(mu_);
     for (auto& kv : cache_) {
@@ -128,6 +138,56 @@ NodeDataServiceImpl::~NodeDataServiceImpl() {
     }
     cache_.clear();
     handle_to_ctx_.clear();
+}
+
+void NodeDataServiceImpl::EnableForwarding(std::string self_node_id,
+                                            routing::HrwRing* ring,
+                                            cluster::NodeDirectory* directory) {
+    self_node_id_ = std::move(self_node_id);
+    ring_         = ring;
+    directory_    = directory;
+}
+
+std::string NodeDataServiceImpl::PrimaryFor(const std::string& tenant_id,
+                                             uint64_t           model_id_hash,
+                                             const std::string& tokens_bytes) const {
+    if (!ring_) return {};
+    // Compose the key bytes HRW hashes against: tenant_id || u64 model_hash
+    // || tokens — same shape on every node, so primary is deterministic.
+    std::vector<uint8_t> key;
+    key.reserve(tenant_id.size() + 8 + tokens_bytes.size());
+    key.insert(key.end(), tenant_id.begin(), tenant_id.end());
+    for (int i = 0; i < 8; ++i) {
+        key.push_back(static_cast<uint8_t>((model_id_hash >> (i * 8)) & 0xff));
+    }
+    key.insert(key.end(), tokens_bytes.begin(), tokens_bytes.end());
+    return ring_->Primary(std::span<const uint8_t>(key.data(), key.size()));
+}
+
+std::shared_ptr<NodeDataServiceImpl::PeerStub>
+NodeDataServiceImpl::GetPeerStub(const std::string& node_id) {
+    {
+        std::lock_guard<std::mutex> lk(stub_mu_);
+        auto it = stubs_.find(node_id);
+        if (it != stubs_.end()) return it->second;
+    }
+    if (!directory_) return nullptr;
+    auto ep = directory_->Resolve(node_id);
+    if (!ep.has_value()) return nullptr;
+
+    auto channel = ::grpc::CreateChannel(ep->dial_target,
+                                          ::grpc::InsecureChannelCredentials());
+    auto stub    = kvcache::proto::NodeData::NewStub(channel);
+    auto entry   = std::make_shared<PeerStub>();
+    entry->channel = std::move(channel);
+    entry->stub    = std::move(stub);
+
+    std::lock_guard<std::mutex> lk(stub_mu_);
+    // Resolve the race: keep the first inserted entry.
+    auto it = stubs_.find(node_id);
+    if (it != stubs_.end()) return it->second;
+    stubs_.emplace(node_id, entry);
+    return entry;
 }
 
 std::size_t NodeDataServiceImpl::CachedCtxCount() const {
@@ -181,12 +241,49 @@ kv_ctx_t* NodeDataServiceImpl::CtxForHandle(uint64_t h) {
 }
 
 ::grpc::Status NodeDataServiceImpl::Lookup(
-    ::grpc::ServerContext* /*context*/,
+    ::grpc::ServerContext* context,
     const kvcache::proto::LookupRequest* request,
     kvcache::proto::LookupResponse*      response) {
-    // Route into the (tenant_hash, model_hash) ctx for this request so
-    // per-tenant scheduler buckets are honoured even when many tenants
-    // multiplex over one connection.
+    // Phase Q-1 — cross-node Lookup fan-out.
+    //
+    // If fan-out is enabled and we are NOT the HRW primary for this
+    // key, forward the request to the owner over a cached gRPC stub.
+    // To avoid a forwarding loop we tag the outbound request with the
+    // `x-kvcache-forwarded` metadata header; receivers that see the
+    // header serve the request locally regardless of HRW (the sender
+    // already made the routing decision).
+    static constexpr char kForwardedHeader[] = "x-kvcache-forwarded";
+    bool already_forwarded = false;
+    if (context) {
+        const auto& md = context->client_metadata();
+        already_forwarded = md.find(kForwardedHeader) != md.end();
+    }
+    if (ring_ && !already_forwarded && !self_node_id_.empty()) {
+        // Token vector is read repeatedly; pack as bytes once.
+        std::string tokens_bytes;
+        tokens_bytes.resize(request->tokens_size() * 4);
+        for (int i = 0; i < request->tokens_size(); ++i) {
+            const uint32_t t = request->tokens(i);
+            std::memcpy(tokens_bytes.data() + i * 4, &t, 4);
+        }
+        const std::string owner = PrimaryFor(
+            request->tenant_id(), request->model_id_hash(), tokens_bytes);
+        if (!owner.empty() && owner != self_node_id_) {
+            auto peer = GetPeerStub(owner);
+            if (!peer) {
+                return {::grpc::StatusCode::UNAVAILABLE,
+                         "Lookup forward: peer '" + owner + "' unreachable"};
+            }
+            ::grpc::ClientContext fctx;
+            fctx.AddMetadata(kForwardedHeader, "1");
+            return peer->stub->Lookup(&fctx, *request, response);
+        }
+        // Fall through — we are the owner.
+    }
+
+    // Local path. Route into the (tenant_hash, model_hash) ctx for this
+    // request so per-tenant scheduler buckets are honoured even when
+    // many tenants multiplex over one connection.
     const uint64_t th = HashTenantString(request->tenant_id());
     const uint64_t mh = request->model_id_hash();
     kv_ctx_t* ctx = GetOrOpenCtx(th, mh);

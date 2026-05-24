@@ -25,21 +25,28 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <string>
 
 #include "runtime/node_runtime.h"
 
 #if defined(KVCACHE_HAVE_GRPC)
+#include "cluster/etcd_client.h"
+#include "cluster/node_directory.h"
+#include "cluster/node_registrar.h"
 #include "kvcache/kv_abi.h"
 #include "grpc/grpc_server.h"
 #include "grpc/node_data_service.h"
+#include "routing/hrw.h"
 #endif
 
 namespace {
 
 void Usage(const char* argv0) {
     std::fprintf(stderr,
-        "usage: %s [--config PATH] [--grpc-port N] [--metrics-port N]\n",
+        "usage: %s [--config PATH] [--grpc-port N] [--metrics-port N]\n"
+        "       [--tls-ca PEM] [--tls-cert PEM] [--tls-key PEM]\n"
+        "       [--node-id ID --etcd-endpoints ep1,ep2 --advertise-host H]\n",
         argv0);
 }
 
@@ -64,13 +71,20 @@ int main(int argc, char** argv) {
     // actual TLS termination is a future phase (a follow-up will pass
     // these into the grpc::ServerCredentials at server start).
     std::string tls_ca, tls_cert, tls_key;
+    // Phase Q-1 — cluster identity / discovery flags. Empty values
+    // mean "single-node mode" (no etcd registration, no fan-out); the
+    // binary still works for tests that don't need clustering.
+    std::string node_id, etcd_endpoints, advertise_host;
     for (int i = 1; i < argc; ++i) {
-        if (TryFlag(i, argc, argv, "--config",       &o.config_path)) continue;
-        if (TryFlag(i, argc, argv, "--grpc-port",    &grpc_port_s))   continue;
-        if (TryFlag(i, argc, argv, "--metrics-port", &metrics_port_s)) continue;
-        if (TryFlag(i, argc, argv, "--tls-ca",       &tls_ca))   continue;
-        if (TryFlag(i, argc, argv, "--tls-cert",     &tls_cert)) continue;
-        if (TryFlag(i, argc, argv, "--tls-key",      &tls_key))  continue;
+        if (TryFlag(i, argc, argv, "--config",          &o.config_path)) continue;
+        if (TryFlag(i, argc, argv, "--grpc-port",       &grpc_port_s))   continue;
+        if (TryFlag(i, argc, argv, "--metrics-port",    &metrics_port_s)) continue;
+        if (TryFlag(i, argc, argv, "--tls-ca",          &tls_ca))   continue;
+        if (TryFlag(i, argc, argv, "--tls-cert",        &tls_cert)) continue;
+        if (TryFlag(i, argc, argv, "--tls-key",         &tls_key))  continue;
+        if (TryFlag(i, argc, argv, "--node-id",         &node_id))          continue;
+        if (TryFlag(i, argc, argv, "--etcd-endpoints",  &etcd_endpoints))   continue;
+        if (TryFlag(i, argc, argv, "--advertise-host",  &advertise_host))   continue;
         if (std::strcmp(argv[i], "-h") == 0 ||
             std::strcmp(argv[i], "--help") == 0) {
             Usage(argv[0]);
@@ -126,6 +140,67 @@ int main(int argc, char** argv) {
     o.grpc_port          = grpc.BoundPort();  // for log clarity
     std::fprintf(stderr, "kvstore-node: grpc tls=%s\n",
                   grpc.TlsEnabled() ? "on" : "off");
+
+    // ---- Phase Q-1: optional cluster registration + fan-out ---------
+    std::unique_ptr<kvcache::node::cluster::HttpEtcdClient>     etcd;
+    std::unique_ptr<kvcache::node::routing::HrwRing>            ring;
+    std::unique_ptr<kvcache::node::cluster::NodeDirectory>      directory;
+    std::unique_ptr<kvcache::node::cluster::NodeRegistrar>      registrar;
+    if (!node_id.empty() && !etcd_endpoints.empty() &&
+        !advertise_host.empty()) {
+        // HttpEtcdClient takes a single endpoint URL; the flag accepts
+        // a comma-separated list for forward-compat with the gRPC
+        // client, but we use the first entry here. Schemes are auto-
+        // prefixed with http:// when missing.
+        std::string first = etcd_endpoints;
+        if (const auto comma = first.find(','); comma != std::string::npos) {
+            first = first.substr(0, comma);
+        }
+        if (first.find("://") == std::string::npos) {
+            first = "http://" + first;
+        }
+        kvcache::node::cluster::HttpEtcdClient::Options eo;
+        eo.endpoint = first;
+        std::string eerr;
+        etcd = kvcache::node::cluster::HttpEtcdClient::Create(eo, &eerr);
+        if (!etcd) {
+            std::fprintf(stderr,
+                "kvstore-node: etcd dial failed (%s); running single-node\n",
+                eerr.c_str());
+        } else {
+            ring      = std::make_unique<kvcache::node::routing::HrwRing>();
+            directory = std::make_unique<
+                kvcache::node::cluster::NodeDirectory>(etcd.get(), ring.get());
+            std::string dirr;
+            if (!directory->Start(&dirr)) {
+                std::fprintf(stderr,
+                    "kvstore-node: directory start failed: %s\n", dirr.c_str());
+                directory.reset();
+            }
+            kvcache::node::cluster::NodeRegistrar::Options ro;
+            ro.node_id        = node_id;
+            ro.advertise_host = advertise_host;
+            ro.grpc_port      = grpc.BoundPort();
+            registrar = std::make_unique<
+                kvcache::node::cluster::NodeRegistrar>(etcd.get(), ro);
+            std::string rerr;
+            if (!registrar->Start(&rerr)) {
+                std::fprintf(stderr,
+                    "kvstore-node: node registrar failed: %s\n", rerr.c_str());
+                registrar.reset();
+            } else {
+                std::fprintf(stderr,
+                    "kvstore-node: registered as '%s' at %s:%u\n",
+                    node_id.c_str(), advertise_host.c_str(),
+                    grpc.BoundPort());
+            }
+            if (directory) {
+                svc.EnableForwarding(node_id, ring.get(), directory.get());
+                std::fprintf(stderr,
+                    "kvstore-node: cross-node Lookup fan-out enabled\n");
+            }
+        }
+    }
 #endif
 
     kvcache::node::runtime::NodeRuntime rt(o);
@@ -144,6 +219,11 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "kvstore-node: stopped (signal=%d)\n", sig);
 
 #if defined(KVCACHE_HAVE_GRPC)
+    // Tear down in reverse order. Registrar.Stop revokes the etcd
+    // lease so peers stop routing to us within the next watch tick;
+    // directory.Stop cancels the watcher; then the gRPC server.
+    if (registrar)  registrar->Stop();
+    if (directory)  directory->Stop();
     grpc.Stop();
     kv_ctx_close(ctx);
 #endif

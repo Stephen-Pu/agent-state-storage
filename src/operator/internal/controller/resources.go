@@ -220,6 +220,21 @@ func DesiredStatefulSet(cluster *kvcachev1alpha1.KVCacheCluster) *appsv1.Statefu
 		"--tls-cert", mtlsMountPath+"/"+mtlsKeyTLSCert,
 		"--tls-key", mtlsMountPath+"/"+mtlsKeyTLSKey,
 	)
+
+	// Phase Q-1 — cluster identity + discovery flags. K8s substitutes
+	// $(ENV) in args at pod creation when the env var is declared in
+	// the same container (which both KVCACHE_NODE_NAME and
+	// KVCACHE_POD_IP already are above). The kvstore-node binary
+	// only flips on fan-out when all three flags are present, so
+	// passing them unconditionally is safe.
+	etcdEndpoints := EtcdEndpointsFor(cluster)
+	if len(etcdEndpoints) > 0 {
+		container.Args = append(container.Args,
+			"--node-id", "$(KVCACHE_NODE_NAME)",
+			"--advertise-host", "$(KVCACHE_POD_IP)",
+			"--etcd-endpoints", strings.Join(etcdEndpoints, ","),
+		)
+	}
 	volumes := []corev1.Volume{
 		{
 			Name: configMapVolume,
