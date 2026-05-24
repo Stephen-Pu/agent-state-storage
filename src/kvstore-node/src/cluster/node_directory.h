@@ -44,6 +44,14 @@ class NodeDirectory {
    public:
     struct Options {
         std::string key_prefix = "/kvcache/nodes/";
+        // Phase K-3 — the etcd key the CP leader writes the
+        // ClusterView snapshot to. When this key is present, the
+        // directory adopts the snapshot wholesale (atomic table
+        // replace). The /kvcache/nodes/ prefix watch stays armed in
+        // parallel so the table keeps converging when no leader has
+        // published yet (or the leader's lease expired mid-failover).
+        // Empty disables the ClusterView path entirely.
+        std::string view_key = "/kvcache/cluster/view";
     };
 
     NodeDirectory(IEtcdClient* etcd, routing::HrwRing* ring);
@@ -67,6 +75,12 @@ class NodeDirectory {
 
    private:
     void OnWatch(const WatchEvent& ev);
+    // Phase K-3 — single-key watcher on the CP's ClusterView snapshot.
+    // Replaces the entire table in one go from the JSON payload.
+    void OnClusterViewWatch(const WatchEvent& ev);
+    // Apply a serialized ClusterView JSON to the in-memory table.
+    // Caller does NOT hold `mu_`; the function takes it internally.
+    void ApplyClusterViewJson(const std::string& json);
     // Re-build the HrwRing's node set from the current table. Caller
     // holds `mu_`.
     void RebuildRingLocked();
@@ -74,7 +88,14 @@ class NodeDirectory {
     IEtcdClient*           etcd_;
     routing::HrwRing*      ring_;        // not owned
     Options                opts_;
-    WatchHandle            watch_handle_ = 0;
+    WatchHandle            watch_handle_      = 0;
+    WatchHandle            view_watch_handle_ = 0;
+    // Phase K-3 — last ClusterView epoch we've applied. Stale or
+    // re-ordered events (from leader churn) are dropped if their
+    // epoch isn't greater than this. Reset to 0 on leader_id
+    // change so a brand-new leader's epoch=1 always wins.
+    std::string            last_view_leader_;
+    uint64_t               last_view_epoch_ = 0;
 
     mutable std::mutex                                mu_;
     std::unordered_map<std::string, NodeEndpoint>     table_;

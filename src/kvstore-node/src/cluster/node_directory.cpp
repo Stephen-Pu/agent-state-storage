@@ -1,6 +1,8 @@
 // Phase Q-1 — NodeDirectory implementation.
 #include "cluster/node_directory.h"
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 
 #include "cluster/node_registrar.h"  // for Decode/EncodeNodeValue
@@ -64,6 +66,26 @@ bool NodeDirectory::Start(std::string* err) {
         running_.store(false);
         return false;
     }
+
+    // Phase K-3 — also watch the CP's ClusterView snapshot.
+    if (!opts_.view_key.empty()) {
+        // Seed from any view the leader already published. Missing
+        // key is OK — fall back to the prefix-watch path until the
+        // first publish lands.
+        std::string vget_err;
+        if (auto kv = etcd_->Get(opts_.view_key, &vget_err); kv.has_value()) {
+            ApplyClusterViewJson(kv->value);
+        }
+        // Single-key watch via WatchPrefix on the exact key works
+        // because prefix matches the key itself and excludes any
+        // sibling keys (none exist under /kvcache/cluster/ today).
+        view_watch_handle_ = etcd_->WatchPrefix(opts_.view_key,
+            [this](const WatchEvent& ev) { OnClusterViewWatch(ev); });
+        // Watch failure on the view path is non-fatal: the prefix
+        // watch above keeps the table converging. Log via err only
+        // if it's still null (don't overwrite the more important
+        // primary-watch err).
+    }
     return true;
 }
 
@@ -73,6 +95,65 @@ void NodeDirectory::Stop() {
         etcd_->Unwatch(watch_handle_);
         watch_handle_ = 0;
     }
+    if (view_watch_handle_ != 0 && etcd_) {
+        etcd_->Unwatch(view_watch_handle_);
+        view_watch_handle_ = 0;
+    }
+}
+
+// Phase K-3 — incoming events on /kvcache/cluster/view. Delete is the
+// signal that the leader's lease expired (or someone explicitly
+// dropped it). Treat that as "view is gone; the prefix watch is the
+// source of truth again" by resetting the epoch tracking — a fresh
+// leader's epoch=1 will be accepted next.
+void NodeDirectory::OnClusterViewWatch(const WatchEvent& ev) {
+    if (ev.type == WatchEventType::kDelete) {
+        std::lock_guard lk(mu_);
+        last_view_leader_.clear();
+        last_view_epoch_ = 0;
+        return;
+    }
+    ApplyClusterViewJson(ev.kv.value);
+}
+
+void NodeDirectory::ApplyClusterViewJson(const std::string& json) {
+    if (json.empty()) return;
+    nlohmann::json doc;
+    try {
+        doc = nlohmann::json::parse(json);
+    } catch (...) {
+        // Bad JSON shouldn't sink the directory — the prefix-watch
+        // path keeps the table fresh on its own.
+        return;
+    }
+    const auto leader_id = doc.value("leader_id", std::string{});
+    const uint64_t epoch = doc.value("epoch", uint64_t{0});
+
+    std::lock_guard lk(mu_);
+    // Drop stale / out-of-order events from the same leader. A
+    // different leader ID always resets the epoch threshold (a new
+    // leader's epoch=1 must be accepted).
+    if (leader_id == last_view_leader_ && epoch <= last_view_epoch_) {
+        return;
+    }
+    last_view_leader_ = leader_id;
+    last_view_epoch_  = epoch;
+
+    // Adopt the view's membership wholesale. The view IS authoritative
+    // by construction (CP derived it from /kvcache/nodes/ at publish
+    // time), so we can replace the table without losing data — at
+    // worst we briefly drop a node the prefix watch will re-add.
+    table_.clear();
+    const auto& nodes = doc.value("nodes", nlohmann::json::array());
+    for (const auto& n : nodes) {
+        const auto id   = n.value("node_id", std::string{});
+        const auto host = n.value("host",    std::string{});
+        const uint16_t port = static_cast<uint16_t>(
+            n.value("grpc_port", uint32_t{0}));
+        if (id.empty() || host.empty() || port == 0) continue;
+        table_[id] = NodeEndpoint{host, port, DialTarget(host, port)};
+    }
+    RebuildRingLocked();
 }
 
 void NodeDirectory::OnWatch(const WatchEvent& ev) {

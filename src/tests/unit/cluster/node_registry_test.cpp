@@ -145,6 +145,83 @@ TEST(NodeDirectoryTest, SeedsThenObservesPuts) {
     dir.Stop();
 }
 
+// Phase K-3 — directory adopts the CP-published ClusterView snapshot
+// in one go. PUTting a view with two nodes makes the table reflect
+// those nodes BEFORE either registrar-published key exists; later
+// putting a smaller view replaces (not merges) the table. A stale-
+// epoch view from the same leader is dropped.
+TEST(NodeDirectoryTest, AdoptsClusterViewSnapshot) {
+    InMemoryEtcdClient etcd;
+    HrwRing ring;
+    NodeDirectory dir(&etcd, &ring);
+    std::string err;
+    ASSERT_TRUE(dir.Start(&err)) << err;
+    EXPECT_EQ(dir.NodeCount(), 0u);
+
+    // PUT a ClusterView with 2 nodes — the directory should adopt
+    // it even though /kvcache/nodes/ has no registrar entries.
+    const std::string v1 = R"({
+        "epoch": 1,
+        "leader_id": "cp-test",
+        "published_at_ns": 0,
+        "nodes": [
+          {"node_id":"alpha","host":"10.0.0.1","grpc_port":7000},
+          {"node_id":"beta", "host":"10.0.0.2","grpc_port":7001}
+        ]
+    })";
+    ASSERT_TRUE(etcd.Put("/kvcache/cluster/view", v1, kNoLease,
+                           nullptr, &err)) << err;
+    ASSERT_TRUE(WaitFor([&] { return dir.NodeCount() == 2; }));
+    {
+        auto a = dir.Resolve("alpha");
+        ASSERT_TRUE(a.has_value());
+        EXPECT_EQ(a->dial_target, "10.0.0.1:7000");
+    }
+
+    // Stale-epoch view from the same leader: must be ignored.
+    const std::string v_stale = R"({
+        "epoch": 1, "leader_id": "cp-test",
+        "nodes": [{"node_id":"ghost","host":"x","grpc_port":1}]
+    })";
+    ASSERT_TRUE(etcd.Put("/kvcache/cluster/view", v_stale, kNoLease,
+                           nullptr, &err));
+    // Negative check: NodeCount should NOT briefly flip to 1.
+    // Sleep a beat so the watcher dispatched (in-memory etcd is
+    // synchronous to PUT but the callback runs on a dispatch
+    // thread).
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    EXPECT_EQ(dir.NodeCount(), 2u)
+        << "stale-epoch view from same leader must be ignored";
+    EXPECT_FALSE(dir.Resolve("ghost").has_value());
+
+    // Fresh epoch with one node: table replaces wholesale.
+    const std::string v2 = R"({
+        "epoch": 7, "leader_id": "cp-test",
+        "nodes": [{"node_id":"gamma","host":"10.0.0.3","grpc_port":7002}]
+    })";
+    ASSERT_TRUE(etcd.Put("/kvcache/cluster/view", v2, kNoLease,
+                           nullptr, &err));
+    ASSERT_TRUE(WaitFor([&] {
+        auto ids = dir.NodeIds();
+        return ids.size() == 1 && ids[0] == "gamma";
+    }));
+    EXPECT_FALSE(dir.Resolve("alpha").has_value());
+
+    // New leader's epoch=1 must be accepted (epoch threshold resets
+    // when leader_id changes).
+    const std::string v_new_leader = R"({
+        "epoch": 1, "leader_id": "cp-2",
+        "nodes": [{"node_id":"delta","host":"10.0.0.4","grpc_port":7003}]
+    })";
+    ASSERT_TRUE(etcd.Put("/kvcache/cluster/view", v_new_leader, kNoLease,
+                           nullptr, &err));
+    ASSERT_TRUE(WaitFor([&] {
+        auto ids = dir.NodeIds();
+        return ids.size() == 1 && ids[0] == "delta";
+    }));
+    dir.Stop();
+}
+
 TEST(NodeDirectoryTest, PrimaryConvergesOnSurvivingNode) {
     InMemoryEtcdClient etcd;
     HrwRing ring;
