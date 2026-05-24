@@ -250,6 +250,126 @@ TEST(LookupForwarding, NonPrimaryForwardsToPrimary) {
 // Release based on (a) HRW for Reserve, (b) the (handle → owner) map
 // for the handle-based RPCs.
 // ---------------------------------------------------------------------------
+// Phase R-1 — chaos: forward target dies mid-flight.
+//
+// HRW routes the request to a peer; we shut that peer down so the
+// cached PeerStub points at a dead listener. The Lookup must
+// surface a clean grpc::StatusCode::UNAVAILABLE (not a silent miss
+// or a hung RPC). Verifies the forward path's degradation contract:
+// the caller can distinguish "owner is up but data isn't there"
+// from "owner is unreachable".
+TEST(LookupForwarding, ForwardSurfacesUnavailableWhenPeerDown) {
+    kv_ctx_config_t cfg{};
+    cfg.abi_version = KVCACHE_ABI_VERSION;
+    cfg.tenant_id   = "chaos-tenant";
+    cfg.model_id    = "chaos-down";
+    kv_ctx_t* ctx = nullptr;
+    ASSERT_EQ(kv_ctx_open(&cfg, &ctx), KV_OK);
+
+    InMemoryEtcdClient etcd;
+    HrwRing            ring;
+    NodeDirectory      dir(&etcd, &ring);
+    std::string err;
+    ASSERT_TRUE(dir.Start(&err)) << err;
+
+    auto svc_a = std::make_unique<NodeDataServiceImpl>(ctx);
+    auto svc_b = std::make_unique<NodeDataServiceImpl>(ctx);
+    GrpcServer::Options gso;
+    gso.bind_host = "127.0.0.1";
+    gso.port      = 0;
+    auto server_a = std::make_unique<GrpcServer>(gso, svc_a.get());
+    auto server_b = std::make_unique<GrpcServer>(gso, svc_b.get());
+    ASSERT_TRUE(server_a->Ok());
+    ASSERT_TRUE(server_b->Ok());
+
+    NodeRegistrar::Options oa{};
+    oa.node_id = "node-a"; oa.advertise_host = "127.0.0.1";
+    oa.grpc_port = server_a->BoundPort();
+    NodeRegistrar ra(&etcd, oa);
+    ASSERT_TRUE(ra.Start(&err)) << err;
+
+    NodeRegistrar::Options ob{};
+    ob.node_id = "node-b"; ob.advertise_host = "127.0.0.1";
+    ob.grpc_port = server_b->BoundPort();
+    NodeRegistrar rb(&etcd, ob);
+    ASSERT_TRUE(rb.Start(&err)) << err;
+    ASSERT_TRUE(WaitFor([&] { return dir.NodeCount() == 2; }));
+
+    svc_a->EnableForwarding("node-a", &ring, &dir);
+    svc_b->EnableForwarding("node-b", &ring, &dir);
+
+    // Pick a key whose HRW primary is one specific node; shut down
+    // that node; send Lookup to the other.
+    const std::string tenant_id = "chaos-tenant";
+    const uint64_t    model_hash = 0xCAFEFEED;
+    const auto        tokens     = RangeTokens(70000, 2 * kChunkTokens);
+    std::vector<uint8_t> key;
+    key.insert(key.end(), tenant_id.begin(), tenant_id.end());
+    for (int i = 0; i < 8; ++i) {
+        key.push_back(static_cast<uint8_t>((model_hash >> (i * 8)) & 0xff));
+    }
+    for (uint32_t t : tokens) {
+        for (int i = 0; i < 4; ++i) {
+            key.push_back(static_cast<uint8_t>((t >> (i * 8)) & 0xff));
+        }
+    }
+    const std::string primary = ring.Primary(
+        std::span<const uint8_t>(key.data(), key.size()));
+    ASSERT_TRUE(primary == "node-a" || primary == "node-b");
+
+    // Find the still-alive non-primary; build a stub against it
+    // before we tear down the primary (so the channel exists).
+    GrpcServer& survivor   = (primary == "node-a") ? *server_b : *server_a;
+    GrpcServer& doomed     = (primary == "node-a") ? *server_a : *server_b;
+    auto channel = ::grpc::CreateChannel(
+        "127.0.0.1:" + std::to_string(survivor.BoundPort()),
+        ::grpc::InsecureChannelCredentials());
+    auto stub = NodeData::NewStub(channel);
+
+    // Kill the primary. The directory still THINKS both nodes are
+    // alive (the registrar's lease hasn't expired yet), so the
+    // survivor's HRW will still pick the dead node — exactly the
+    // chaos we want to test.
+    doomed.Stop();
+
+    // Lookup against the survivor → forward to the (now-dead) primary
+    // → must surface UNAVAILABLE.
+    ::grpc::ClientContext lctx;
+    // Short deadline so the test doesn't wait for gRPC's default
+    // ~120s connect timeout to expire.
+    lctx.set_deadline(std::chrono::system_clock::now() +
+                       std::chrono::seconds(3));
+    kvcache::proto::LookupRequest lreq;
+    lreq.set_tenant_id(tenant_id);
+    lreq.set_model_id_hash(model_hash);
+    for (uint32_t t : tokens) lreq.add_tokens(t);
+    kvcache::proto::LookupResponse lresp;
+    auto status = stub->Lookup(&lctx, lreq, &lresp);
+    EXPECT_FALSE(status.ok())
+        << "Lookup against dead peer must fail, not silently miss";
+    // gRPC may report DEADLINE_EXCEEDED (the channel is still trying
+    // to reconnect) or UNAVAILABLE (no listener). Either is correct
+    // "peer is gone" signal — what we MUST NOT see is OK + hit=false.
+    EXPECT_TRUE(
+        status.error_code() == ::grpc::StatusCode::UNAVAILABLE ||
+        status.error_code() == ::grpc::StatusCode::DEADLINE_EXCEEDED)
+        << "expected UNAVAILABLE or DEADLINE_EXCEEDED, got "
+        << status.error_code() << ": " << status.error_message();
+
+    // Cleanup.
+    stub.reset();
+    ra.Stop();
+    rb.Stop();
+    server_a->Stop();
+    server_b->Stop();
+    server_a.reset();
+    server_b.reset();
+    svc_a.reset();
+    svc_b.reset();
+    dir.Stop();
+    kv_ctx_close(ctx);
+}
+
 TEST(LookupForwarding, ReserveSealForwardsViaHandleMap) {
     kv_ctx_config_t cfg{};
     cfg.abi_version = KVCACHE_ABI_VERSION;
