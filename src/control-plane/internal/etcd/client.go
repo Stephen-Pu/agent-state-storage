@@ -130,6 +130,20 @@ func (c *Client) Put(ctx context.Context, key, value string, lease clientv3.Leas
 	return nil
 }
 
+// Get returns the value at `key`, or nil bytes if the key is absent.
+// Phase K-2 — used by ClusterView consumers that read a single
+// versioned snapshot key.
+func (c *Client) Get(ctx context.Context, key string) ([]byte, error) {
+	resp, err := c.cli.Get(ctx, key)
+	if err != nil {
+		return nil, fmt.Errorf("etcd: get: %w", err)
+	}
+	if len(resp.Kvs) == 0 {
+		return nil, nil
+	}
+	return resp.Kvs[0].Value, nil
+}
+
 // GetPrefix returns all KVs whose keys start with `prefix`, sorted by key.
 func (c *Client) GetPrefix(ctx context.Context, prefix string) ([]KV, error) {
 	resp, err := c.cli.Get(ctx, prefix,

@@ -202,31 +202,28 @@ func runElection(ctx context.Context, cli *clientv3.Client, electionPath string,
 			continue
 		}
 		log.Printf("control-plane: ELECTED leader as %s", ident)
-		runLeaderDuties(ctx, registry)
+		runLeaderDuties(ctx, registry, ident, sess.Lease())
 		_ = e.Resign(context.Background())
 		sess.Close()
 	}
 }
 
-// runLeaderDuties is the work loop that only the leader executes. Today it
-// just streams membership events as a sanity log. A future phase will add
-// quota reconciliation and bloom-sketch fan-out.
-func runLeaderDuties(ctx context.Context, registry *membership.Registry) {
-	events, err := registry.Watch(ctx)
-	if err != nil {
-		log.Printf("control-plane: membership watch: %v", err)
-		return
+// runLeaderDuties is the work loop that only the leader executes.
+//
+// Phase K-2 — the leader publishes a coherent `ClusterView` snapshot
+// to /kvcache/cluster/view every time membership changes (debounced).
+// Consumers (kvstore-node NodeDirectory, future kvagent router) Watch
+// that one key instead of fanning out over the whole /kvcache/nodes/
+// prefix. The view's lease is the election session's lease, so the
+// key auto-expires on leader loss and the new leader rewrites it.
+func runLeaderDuties(ctx context.Context, registry *membership.Registry,
+	leaderID string, lease clientv3.LeaseID) {
+	pub := &membership.ViewPublisher{
+		Registry: registry,
+		Lease:    lease,
+		LeaderID: leaderID,
 	}
-	for ev := range events {
-		switch ev.Type {
-		case membership.EventAdd:
-			log.Printf("[leader] node ADD    id=%s host=%s vcpus=%d",
-				ev.Node.NodeID, ev.Node.Host, ev.Node.Vcpus)
-		case membership.EventUpdate:
-			log.Printf("[leader] node UPDATE id=%s", ev.Node.NodeID)
-		case membership.EventDelete:
-			log.Printf("[leader] node DELETE id=%s (lease lost or graceful exit)",
-				ev.Node.NodeID)
-		}
+	if err := pub.Run(ctx); err != nil {
+		log.Printf("control-plane: cluster-view publisher: %v", err)
 	}
 }

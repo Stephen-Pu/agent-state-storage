@@ -28,21 +28,33 @@ import (
 )
 
 const (
-	NodesPrefix    = "/nodes/"
+	// Phase Q-1 / K-2 aligned — kvstore-node's NodeRegistrar writes its
+	// identity here, and the CP leader watches the same prefix to
+	// build cluster snapshots. Two different prefixes would mean the
+	// CP never sees real nodes (the bug K-2 fixes).
+	NodesPrefix    = "/kvcache/nodes/"
 	DefaultLeaseTTL = 10
 )
 
 // NodeDescriptor is what the registry stores per node.
+//
+// Schema is forward-compatible with kvstore-node's NodeRegistrar JSON
+// (Phase Q-1: {"node_id", "host", "grpc_port"}). Capacity / topology
+// fields are populated by future agents that know their hardware; the
+// MVP node binary leaves them at zero so the JSON parser is permissive.
 type NodeDescriptor struct {
 	NodeID              string   `json:"node_id"`
 	Host                string   `json:"host"`
-	Version             string   `json:"version"`
-	PinnedBytes         uint64   `json:"pinned_bytes"`
-	DramBytes           uint64   `json:"dram_bytes"`
-	NvmeBytes           uint64   `json:"nvme_bytes"`
-	NumaNodes           uint32   `json:"numa_nodes"`
-	Vcpus               uint32   `json:"vcpus"`
-	SupportedTransports []string `json:"supported_transports"`
+	// Phase K-2 — the gRPC port kvstore-node's NodeData service listens
+	// on. Consumers (router, kvagent) read this to dial the node.
+	GrpcPort            uint16   `json:"grpc_port,omitempty"`
+	Version             string   `json:"version,omitempty"`
+	PinnedBytes         uint64   `json:"pinned_bytes,omitempty"`
+	DramBytes           uint64   `json:"dram_bytes,omitempty"`
+	NvmeBytes           uint64   `json:"nvme_bytes,omitempty"`
+	NumaNodes           uint32   `json:"numa_nodes,omitempty"`
+	Vcpus               uint32   `json:"vcpus,omitempty"`
+	SupportedTransports []string `json:"supported_transports,omitempty"`
 }
 
 // EventType mirrors the event the watcher emits.
