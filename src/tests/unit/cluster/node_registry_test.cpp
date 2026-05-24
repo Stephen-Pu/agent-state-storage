@@ -222,6 +222,51 @@ TEST(NodeDirectoryTest, AdoptsClusterViewSnapshot) {
     dir.Stop();
 }
 
+// Phase K-4 — when ClusterView is active the prefix watch should be
+// detached, so a subsequent /kvcache/nodes/ PUT no longer mutates the
+// directory's table. Then deleting the view-key reopens the prefix
+// watch and convergence resumes.
+TEST(NodeDirectoryTest, ViewModeDetachesAndReattachesPrefixWatch) {
+    InMemoryEtcdClient etcd;
+    HrwRing ring;
+    NodeDirectory dir(&etcd, &ring);
+    std::string err;
+    ASSERT_TRUE(dir.Start(&err)) << err;
+
+    // Activate view-mode by publishing a ClusterView with one node.
+    const std::string v = R"({
+        "epoch": 1, "leader_id": "L1",
+        "nodes": [{"node_id":"alpha","host":"10.0.0.1","grpc_port":7000}]
+    })";
+    ASSERT_TRUE(etcd.Put("/kvcache/cluster/view", v, kNoLease, nullptr, &err));
+    ASSERT_TRUE(WaitFor([&] { return dir.NodeCount() == 1; }));
+
+    // Now register a NEW node via the prefix path. With the prefix
+    // watch detached, this PUT should NOT show up in the directory
+    // (until either the view is updated to include it OR the view
+    // is deleted, restoring prefix mode).
+    NodeRegistrar::Options o{};
+    o.node_id = "beta"; o.advertise_host = "10.0.0.2"; o.grpc_port = 7001;
+    NodeRegistrar rb(&etcd, o);
+    ASSERT_TRUE(rb.Start(&err)) << err;
+    // Give any spurious events a window to fire — they shouldn't.
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    EXPECT_EQ(dir.NodeCount(), 1u)
+        << "view-mode must ignore prefix events; saw "
+        << dir.NodeCount() << " entries";
+    EXPECT_FALSE(dir.Resolve("beta").has_value());
+
+    // Delete the view key — leader loss. Prefix watch should reopen
+    // + re-seed, picking up the registrar entry that was published
+    // while we were in view-mode.
+    ASSERT_TRUE(etcd.Delete("/kvcache/cluster/view", &err));
+    ASSERT_TRUE(WaitFor([&] {
+        return dir.Resolve("beta").has_value();
+    }));
+    rb.Stop();
+    dir.Stop();
+}
+
 TEST(NodeDirectoryTest, PrimaryConvergesOnSurvivingNode) {
     InMemoryEtcdClient etcd;
     HrwRing ring;

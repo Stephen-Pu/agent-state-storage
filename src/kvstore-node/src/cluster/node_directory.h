@@ -80,7 +80,18 @@ class NodeDirectory {
     void OnClusterViewWatch(const WatchEvent& ev);
     // Apply a serialized ClusterView JSON to the in-memory table.
     // Caller does NOT hold `mu_`; the function takes it internally.
-    void ApplyClusterViewJson(const std::string& json);
+    // Returns true if the view was accepted (epoch fresh enough).
+    bool ApplyClusterViewJson(const std::string& json);
+    // Phase K-4 — prefix-watch lifecycle. Opening seeds from
+    // GetPrefix first then arms WatchPrefix. The *Locked variant
+    // assumes `mu_` is held; the bare variant takes it. Closing
+    // (when transitioning into view mode) hands the handle out
+    // through the caller-side WatchHandle plumbing in
+    // ApplyClusterViewJson — there's no closer here because
+    // calling etcd_->Unwatch under mu_ deadlocks against the etcd
+    // dispatcher's callback path.
+    void OpenPrefixWatchLocked();
+    void OpenPrefixWatch();
     // Re-build the HrwRing's node set from the current table. Caller
     // holds `mu_`.
     void RebuildRingLocked();
@@ -96,6 +107,12 @@ class NodeDirectory {
     // change so a brand-new leader's epoch=1 always wins.
     std::string            last_view_leader_;
     uint64_t               last_view_epoch_ = 0;
+    // Phase K-4 — when true, the directory is being driven by
+    // ClusterView events alone and the prefix watch has been
+    // un-subscribed to save etcd traffic. Flips back to false on
+    // view-key delete (leader lease expiry) so the directory
+    // re-opens the prefix watch and keeps converging.
+    bool                   view_active_ = false;
 
     mutable std::mutex                                mu_;
     std::unordered_map<std::string, NodeEndpoint>     table_;

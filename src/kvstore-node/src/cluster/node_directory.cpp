@@ -4,6 +4,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <thread>
 
 #include "cluster/node_registrar.h"  // for Decode/EncodeNodeValue
 
@@ -42,49 +43,41 @@ bool NodeDirectory::Start(std::string* err) {
         return false;
     }
 
-    // Seed from a one-shot GetPrefix so a freshly-started node sees its
-    // peers immediately — Watch alone would only catch CHANGES from the
-    // current revision forward.
-    auto seed = etcd_->GetPrefix(opts_.key_prefix, err);
-    {
-        std::lock_guard lk(mu_);
-        for (const auto& kv : seed) {
-            const std::string node_id = KeyToNodeId(kv.key, opts_.key_prefix);
-            if (node_id.empty()) continue;
-            std::string host;
-            uint16_t    port = 0;
-            if (!DecodeNodeValue(kv.value, &host, &port)) continue;
-            table_[node_id] = NodeEndpoint{host, port, DialTarget(host, port)};
-        }
-        RebuildRingLocked();
-    }
-
-    watch_handle_ = etcd_->WatchPrefix(opts_.key_prefix,
-        [this](const WatchEvent& ev) { OnWatch(ev); });
-    if (watch_handle_ == 0) {
-        if (err) *err = "node_directory: WatchPrefix failed";
-        running_.store(false);
-        return false;
-    }
-
-    // Phase K-3 — also watch the CP's ClusterView snapshot.
+    // Phase K-4 — startup decides ONE primary source of truth.
+    //
+    //   * If the CP leader already published a ClusterView, adopt it
+    //     and run "lean" — view watch only, no prefix watch.
+    //   * Otherwise, seed from the /kvcache/nodes/ prefix and arm the
+    //     prefix watch. The view watch is opened regardless so the
+    //     first leader publish promotes us to lean mode.
+    //
+    // The prefix path is the recovery mode; under steady-state we
+    // expect ~1 RPC/event (the view) instead of one event per node.
+    bool view_seeded = false;
     if (!opts_.view_key.empty()) {
-        // Seed from any view the leader already published. Missing
-        // key is OK — fall back to the prefix-watch path until the
-        // first publish lands.
         std::string vget_err;
         if (auto kv = etcd_->Get(opts_.view_key, &vget_err); kv.has_value()) {
-            ApplyClusterViewJson(kv->value);
+            view_seeded = ApplyClusterViewJson(kv->value);
         }
-        // Single-key watch via WatchPrefix on the exact key works
-        // because prefix matches the key itself and excludes any
-        // sibling keys (none exist under /kvcache/cluster/ today).
+    }
+
+    if (!view_seeded) {
+        // No view yet — start in prefix-driven mode.
+        std::lock_guard lk(mu_);
+        OpenPrefixWatchLocked();
+        if (watch_handle_ == 0) {
+            if (err) *err = "node_directory: WatchPrefix failed";
+            running_.store(false);
+            return false;
+        }
+    }
+
+    if (!opts_.view_key.empty()) {
+        // Always arm the view watch — even when we just seeded from
+        // it, a future PUT (next epoch) needs to land somewhere.
         view_watch_handle_ = etcd_->WatchPrefix(opts_.view_key,
             [this](const WatchEvent& ev) { OnClusterViewWatch(ev); });
-        // Watch failure on the view path is non-fatal: the prefix
-        // watch above keeps the table converging. Log via err only
-        // if it's still null (don't overwrite the more important
-        // primary-watch err).
+        // View-watch failure is non-fatal: prefix mode keeps working.
     }
     return true;
 }
@@ -108,52 +101,122 @@ void NodeDirectory::Stop() {
 // leader's epoch=1 will be accepted next.
 void NodeDirectory::OnClusterViewWatch(const WatchEvent& ev) {
     if (ev.type == WatchEventType::kDelete) {
-        std::lock_guard lk(mu_);
-        last_view_leader_.clear();
-        last_view_epoch_ = 0;
+        bool need_reopen = false;
+        {
+            std::lock_guard lk(mu_);
+            last_view_leader_.clear();
+            last_view_epoch_ = 0;
+            if (view_active_) {
+                view_active_  = false;
+                need_reopen   = true;
+            }
+        }
+        // Phase K-4 — leader's view is gone; promote the prefix
+        // watch back to primary so the table keeps converging.
+        // We're inside the etcd dispatcher's mutex right now;
+        // OpenPrefixWatch calls back INTO etcd (GetPrefix +
+        // WatchPrefix), which would re-acquire the same mutex →
+        // self-deadlock. Detach a thread to break the call chain.
+        if (need_reopen) {
+            std::thread([this] { OpenPrefixWatch(); }).detach();
+        }
         return;
     }
     ApplyClusterViewJson(ev.kv.value);
 }
 
-void NodeDirectory::ApplyClusterViewJson(const std::string& json) {
-    if (json.empty()) return;
+bool NodeDirectory::ApplyClusterViewJson(const std::string& json) {
+    if (json.empty()) return false;
     nlohmann::json doc;
     try {
         doc = nlohmann::json::parse(json);
     } catch (...) {
         // Bad JSON shouldn't sink the directory — the prefix-watch
         // path keeps the table fresh on its own.
-        return;
+        return false;
     }
     const auto leader_id = doc.value("leader_id", std::string{});
     const uint64_t epoch = doc.value("epoch", uint64_t{0});
 
-    std::lock_guard lk(mu_);
-    // Drop stale / out-of-order events from the same leader. A
-    // different leader ID always resets the epoch threshold (a new
-    // leader's epoch=1 must be accepted).
-    if (leader_id == last_view_leader_ && epoch <= last_view_epoch_) {
-        return;
-    }
-    last_view_leader_ = leader_id;
-    last_view_epoch_  = epoch;
+    // Phase K-4 — track the prefix-watch handle to close OUTSIDE the
+    // lock to avoid invert-order deadlock with the etcd dispatcher.
+    WatchHandle prefix_handle_to_close = 0;
+    bool accepted = false;
+    {
+        std::lock_guard lk(mu_);
+        if (leader_id == last_view_leader_ && epoch <= last_view_epoch_) {
+            return false;  // stale
+        }
+        last_view_leader_ = leader_id;
+        last_view_epoch_  = epoch;
+        accepted = true;
 
-    // Adopt the view's membership wholesale. The view IS authoritative
-    // by construction (CP derived it from /kvcache/nodes/ at publish
-    // time), so we can replace the table without losing data — at
-    // worst we briefly drop a node the prefix watch will re-add.
+        // Adopt the view's membership wholesale.
+        table_.clear();
+        const auto& nodes = doc.value("nodes", nlohmann::json::array());
+        for (const auto& n : nodes) {
+            const auto id   = n.value("node_id", std::string{});
+            const auto host = n.value("host",    std::string{});
+            const uint16_t port = static_cast<uint16_t>(
+                n.value("grpc_port", uint32_t{0}));
+            if (id.empty() || host.empty() || port == 0) continue;
+            table_[id] = NodeEndpoint{host, port, DialTarget(host, port)};
+        }
+        RebuildRingLocked();
+
+        if (!view_active_) {
+            view_active_ = true;
+            // Hand off the prefix-watch handle for closure below.
+            prefix_handle_to_close = watch_handle_;
+            watch_handle_          = 0;
+        }
+    }
+    if (prefix_handle_to_close != 0 && etcd_) {
+        // Phase K-4 — Unwatch from a detached thread.
+        //
+        // ApplyClusterViewJson is invoked synchronously from the
+        // etcd watcher callback path, and the InMemoryEtcdClient (+
+        // some real backends) holds its dispatcher mutex during
+        // callback delivery. Calling Unwatch directly here would
+        // re-enter that same mutex → self-deadlock. The detached
+        // thread breaks the call chain so Unwatch sees the
+        // dispatcher mutex released and completes cleanly.
+        IEtcdClient* e = etcd_;
+        const WatchHandle h = prefix_handle_to_close;
+        std::thread([e, h] { e->Unwatch(h); }).detach();
+    }
+    return accepted;
+}
+
+// Open the prefix watch under mu_, having re-seeded from the live
+// /kvcache/nodes/ prefix so any deltas we missed while in view-mode
+// are reflected in the table immediately. Safe to call from
+// OnClusterViewWatch's delete handler because OnClusterViewWatch
+// releases its own lock_guard before invoking us — see the comment
+// at the call site.
+void NodeDirectory::OpenPrefixWatchLocked() {
+    if (watch_handle_ != 0 || !etcd_) return;
+    std::string ignore;
+    auto seed = etcd_->GetPrefix(opts_.key_prefix, &ignore);
     table_.clear();
-    const auto& nodes = doc.value("nodes", nlohmann::json::array());
-    for (const auto& n : nodes) {
-        const auto id   = n.value("node_id", std::string{});
-        const auto host = n.value("host",    std::string{});
-        const uint16_t port = static_cast<uint16_t>(
-            n.value("grpc_port", uint32_t{0}));
-        if (id.empty() || host.empty() || port == 0) continue;
+    for (const auto& kv : seed) {
+        const std::string id = KeyToNodeId(kv.key, opts_.key_prefix);
+        if (id.empty()) continue;
+        std::string host;
+        uint16_t    port = 0;
+        if (!DecodeNodeValue(kv.value, &host, &port)) continue;
         table_[id] = NodeEndpoint{host, port, DialTarget(host, port)};
     }
     RebuildRingLocked();
+    watch_handle_ = etcd_->WatchPrefix(opts_.key_prefix,
+        [this](const WatchEvent& ev) { OnWatch(ev); });
+}
+
+// Public-shaped helper used by OnClusterViewWatch's delete branch.
+// Takes mu_, does the re-seed + Watch, releases.
+void NodeDirectory::OpenPrefixWatch() {
+    std::lock_guard lk(mu_);
+    OpenPrefixWatchLocked();
 }
 
 void NodeDirectory::OnWatch(const WatchEvent& ev) {
