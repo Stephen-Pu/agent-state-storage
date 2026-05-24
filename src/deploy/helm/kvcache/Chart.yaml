@@ -11,9 +11,9 @@ keywords:
   - llm
   - inference
   - kv-cache
-  - alluxio
+  - prefix-cache
+  - nixl
   - multi-tenant
 maintainers:
   - name: Stephen Pu
-    email: stephen.pu@alluxio.com
-icon: https://alluxio.io/wp-content/uploads/2022/02/alluxio-logo.png
+    email: Stephen-Pu@users.noreply.github.com

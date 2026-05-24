@@ -10,13 +10,13 @@
 // Hot path: append to a bounded SPSC-ish ring (single mutex protects the
 // queue; producer never blocks beyond a mutex acquisition). A background
 // consumer thread drains the ring to:
-//   * The local audit log stream → Alluxio (LLD §6.2 — independent path).
+//   * The local audit log stream → cold object UFS (LLD §6.2 — independent path).
 //   * The RocksDB audit_buffer_overflow CF when the audit stream is down
 //     (LLD §2.3).
 //
 // MVP simplification: the spill consumer is a callback the integrator supplies.
 // The default callback writes to RocksDB via meta::RocksdbStore::AppendAuditOverflow.
-// Replace with a real Alluxio writer at Step-9 time.
+// Replace with a real UFS writer at Step-9 time.
 #pragma once
 
 #include <atomic>

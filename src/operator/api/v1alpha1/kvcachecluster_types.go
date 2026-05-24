@@ -34,7 +34,7 @@ type KVCacheClusterSpec struct {
 	// Tunables for the in-cluster control-plane StatefulSet.
 	ControlPlane *ControlPlaneSpec `json:"controlPlane,omitempty"`
 
-	// Alluxio binding for the T4 cold tier.
+	// Cold-storage binding for the T4 cold tier (pluggable multi-cloud UFS).
 	ColdStorageBinding *ColdStorageBinding `json:"coldStorageBinding,omitempty"`
 
 	// Extra resource requests / limits applied to node pods.

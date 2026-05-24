@@ -5,8 +5,8 @@ Kubernetes operator for KV Cache. LLD §8.2.
 ## CRDs (MVP)
 
 - `KVCacheCluster` — declares a cluster: node replica count, tier
-  capacities, NIXL transport, etcd binding, Alluxio binding for the
-  cold tier.
+  capacities, NIXL transport, etcd binding, cold-storage binding for the
+  T4 tier.
 - `KVCacheTenant` — declares a tenant: namespace, 3D quota, priority
   class.
 

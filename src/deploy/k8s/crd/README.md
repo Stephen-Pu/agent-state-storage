@@ -1,6 +1,6 @@
 # CRDs
 
-- `KVCacheCluster` — cluster topology, tier capacities, Alluxio binding,
+- `KVCacheCluster` — cluster topology, tier capacities, cold-storage binding,
   NIXL transport selection.
 - `KVCacheTenant`  — tenant identity, 3D quota, priority class, namespace map.
 
