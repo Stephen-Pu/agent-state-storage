@@ -22,11 +22,13 @@
 // section is gated on KVCACHE_HAVE_GRPC. Without grpc the binary
 // falls back to the L-1 accept-and-close placeholder (pods still
 // pass readiness; the agent just can't talk to it).
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <string>
+#include <thread>
 
 #include "runtime/node_runtime.h"
 
@@ -162,11 +164,22 @@ int main(int argc, char** argv) {
         kvcache::node::cluster::HttpEtcdClient::Options eo;
         eo.endpoint = first;
         std::string eerr;
-        etcd = kvcache::node::cluster::HttpEtcdClient::Create(eo, &eerr);
+        // Phase Q-3 — retry etcd dial up to ~30 s before giving up.
+        // The in-cluster etcd StatefulSet may still be pulling its image
+        // when the kvstore-node pod gets scheduled; without this retry
+        // the registrar permanently falls back to single-node mode and
+        // the whole fan-out story is silently broken on cold starts.
+        for (int attempt = 0; attempt < 15 && !etcd; ++attempt) {
+            etcd = kvcache::node::cluster::HttpEtcdClient::Create(eo, &eerr);
+            if (etcd) break;
+            std::fprintf(stderr,
+                "kvstore-node: etcd dial attempt %d failed (%s); "
+                "retrying in 2s\n", attempt + 1, eerr.c_str());
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+        }
         if (!etcd) {
             std::fprintf(stderr,
-                "kvstore-node: etcd dial failed (%s); running single-node\n",
-                eerr.c_str());
+                "kvstore-node: etcd dial exhausted; running single-node\n");
         } else {
             ring      = std::make_unique<kvcache::node::routing::HrwRing>();
             directory = std::make_unique<

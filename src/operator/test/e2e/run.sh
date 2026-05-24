@@ -47,6 +47,19 @@ if [ -n "${E2E_CP_IMAGE:-}" ]; then
     kind load docker-image "$E2E_CP_IMAGE" --name "$CLUSTER_NAME"
 fi
 
+# Phase Q-3: pre-load the etcd image too. Without this, kind nodes have
+# to pull it from quay.io on first scheduling, which often pushes the
+# etcd pod past the kvstore-node's first dial attempt — even with the
+# 30 s retry loop, a slow pull can produce flaky e2e runs. Pre-load is
+# best-effort: if `docker pull` fails (no network on the host) we just
+# fall back to in-cluster pull as before.
+ETCD_IMAGE="${ETCD_IMAGE:-quay.io/coreos/etcd:v3.5.13}"
+if docker image inspect "$ETCD_IMAGE" >/dev/null 2>&1 || \
+   docker pull "$ETCD_IMAGE" >/dev/null 2>&1; then
+    echo "==> loading $ETCD_IMAGE into kind cluster $CLUSTER_NAME"
+    kind load docker-image "$ETCD_IMAGE" --name "$CLUSTER_NAME" || true
+fi
+
 echo "==> running e2e tests"
 cd "$REPO_ROOT/src/operator"
 # The workload test reads E2E_IMAGE / E2E_CP_IMAGE itself; export through
