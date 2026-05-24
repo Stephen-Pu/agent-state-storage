@@ -42,6 +42,16 @@ message LookupRequest {
   fixed64 model_id_hash  = 2;
   repeated uint32 tokens = 3;  // request token prefix
   uint32  client_epoch   = 4;  // optimistic concurrency w/ routing cache
+  // Phase Q-6 — explicit tenant_id fingerprint to keep Reserve and
+  // Lookup landing on the same per-(tenant, model) ART namespace
+  // without the server having to recompute it from `tenant_id`.
+  // MUST equal what Reserve's Locator.tenant_id (16 bytes) hashes to
+  // under the server's HashTenantBytes16. Python connector populates
+  // it as FNV-1a(SHA-1(tenant_string)[:16]); the C ABI uses
+  // ctx->tenant_id_hash directly. When zero the server falls back to
+  // deriving the value from `tenant_id` for backward compat with
+  // pre-Q-6 clients.
+  fixed64 tenant_id_hash = 5;
 }
 
 message LookupResponse {

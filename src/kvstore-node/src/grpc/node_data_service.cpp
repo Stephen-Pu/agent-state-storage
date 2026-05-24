@@ -325,7 +325,15 @@ kv_ctx_t* NodeDataServiceImpl::CtxForHandle(uint64_t h) {
     // Local path. Route into the (tenant_hash, model_hash) ctx for this
     // request so per-tenant scheduler buckets are honoured even when
     // many tenants multiplex over one connection.
-    const uint64_t th = HashTenantString(request->tenant_id());
+    // Phase Q-6 — prefer the explicit hash on the wire over re-deriving
+    // it from the string. Zero means the client is pre-Q-6 (or in a
+    // test fixture that doesn't bother) — fall back to the SHA-1 +
+    // FNV-1a path that matches the Python connector's Locator-bytes
+    // hash, so Lookup still lands on the same ART namespace as
+    // Reserve did.
+    const uint64_t th = request->tenant_id_hash() != 0
+        ? request->tenant_id_hash()
+        : HashTenantString(request->tenant_id());
     const uint64_t mh = request->model_id_hash();
     kv_ctx_t* ctx = GetOrOpenCtx(th, mh);
     if (!ctx) return {::grpc::StatusCode::INTERNAL, "kv_ctx_open_from_hashes failed"};

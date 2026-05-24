@@ -100,6 +100,22 @@ inline uint64_t ModelIdHash(const std::string& model) {
     return mh;
 }
 
+// Phase Q-6 — wire-side tenant_id fingerprint. Must equal what the
+// server computes for the matching Reserve's Locator.tenant_id (16
+// bytes), so Lookup and Reserve resolve to the same ART namespace.
+// Derivation: FNV-1a over SHA-1(tenant_string)[:16] — same as
+// HashTenantString in node_data_service.cpp's Q-5 path.
+inline uint64_t TenantIdHash(const std::string& tenant) {
+    uint8_t sha[20];
+    SHA1(reinterpret_cast<const uint8_t*>(tenant.data()), tenant.size(), sha);
+    uint64_t h = 0xcbf29ce484222325ull;
+    for (int i = 0; i < 16; ++i) {
+        h ^= sha[i];
+        h *= 0x100000001b3ull;
+    }
+    return h;
+}
+
 // Build a Locator the agent would normally construct via make_locator.
 // We mirror the FNV-style derivation that kv_abi.cpp uses internally so
 // the server-side seal path lands on the same chunk path.
@@ -206,6 +222,7 @@ TEST_F(NodeDataFixture, ReservePublishSealLookupRoundTrip) {
     kvcache::proto::LookupRequest lreq;
     lreq.set_tenant_id(tenant_id_);
     lreq.set_model_id_hash(ModelIdHash(model_id_));
+    lreq.set_tenant_id_hash(TenantIdHash(tenant_id_));
     for (uint32_t t : tokens) lreq.add_tokens(t);
     kvcache::proto::LookupResponse lresp;
     s = stub_->Lookup(&lctx, lreq, &lresp);
@@ -308,6 +325,7 @@ TEST_F(NodeDataFixture, FetchAcceptsRemoteMrDescriptor) {
     kvcache::proto::LookupRequest lreq;
     lreq.set_tenant_id(tenant_id_);
     lreq.set_model_id_hash(ModelIdHash(model_id_));
+    lreq.set_tenant_id_hash(TenantIdHash(tenant_id_));
     for (uint32_t t : tokens) lreq.add_tokens(t);
     kvcache::proto::LookupResponse lresp;
     ASSERT_TRUE(stub_->Lookup(&lctx, lreq, &lresp).ok());
@@ -389,6 +407,7 @@ TEST_F(NodeDataFixture, FetchHonoursPreRegisteredDstMrKey) {
     kvcache::proto::LookupRequest lreq;
     lreq.set_tenant_id(tenant_id_);
     lreq.set_model_id_hash(ModelIdHash(model_id_));
+    lreq.set_tenant_id_hash(TenantIdHash(tenant_id_));
     for (uint32_t t : tokens) lreq.add_tokens(t);
     kvcache::proto::LookupResponse lresp;
     ASSERT_TRUE(stub_->Lookup(&lctx, lreq, &lresp).ok());
@@ -508,6 +527,7 @@ TEST_F(NodeDataFixture, DramEvictionPrunesArtLeaf) {
         kvcache::proto::LookupRequest lreq;
         lreq.set_tenant_id(tenant_id_);
     lreq.set_model_id_hash(ModelIdHash(model_id_));
+    lreq.set_tenant_id_hash(TenantIdHash(tenant_id_));
         for (uint32_t t : RangeTokens(lo, 2 * kChunkTokens)) lreq.add_tokens(t);
         kvcache::proto::LookupResponse lresp;
         if (!stub_->Lookup(&lctx, lreq, &lresp).ok()) return 0;
@@ -654,6 +674,86 @@ TEST_F(NodeDataFixture, SubscribeDeliversAddEventOnSeal) {
     // Wait for the worker to drain (it cancels itself on first event).
     sub_thread.join();
     EXPECT_GE(events_seen.load(), 1);
+}
+
+// Phase Q-6 — wire-level tenant_id_hash takes precedence over the
+// string. A Lookup with a wrong string but the right pre-computed
+// hash MUST still find what Reserve sealed; one with the right
+// string but a deliberately bogus hash MUST miss. This pins the
+// "field wins, string is fallback only" contract.
+TEST_F(NodeDataFixture, LookupHonoursExplicitTenantIdHash) {
+    const auto tokens             = RangeTokens(28000, 2 * kChunkTokens);
+    const std::size_t bytes_total = tokens.size() * 64;
+
+    // Reserve + Publish + Seal as usual under tenant_id_.
+    ::grpc::ClientContext rctx;
+    kvcache::proto::ReserveRequest rreq;
+    *rreq.mutable_locator() = BuildLocator(tenant_id_, model_id_, tokens,
+                                             bytes_total);
+    rreq.set_bytes(bytes_total);
+    kvcache::proto::ReserveResponse rresp;
+    ASSERT_TRUE(stub_->Reserve(&rctx, rreq, &rresp).ok());
+    auto* slot = reinterpret_cast<uint8_t*>(rresp.slot_iova());
+    std::memset(slot, 0x37, bytes_total);
+
+    ::grpc::ClientContext pctx;
+    kvcache::proto::PublishRequest preq;
+    preq.set_server_handle(rresp.server_handle());
+    preq.set_watermark(bytes_total);
+    kvcache::proto::PublishResponse presp;
+    ASSERT_TRUE(stub_->Publish(&pctx, preq, &presp).ok());
+
+    ::grpc::ClientContext sctx;
+    kvcache::proto::SealRequest sreq;
+    sreq.set_server_handle(rresp.server_handle());
+    for (uint32_t t : tokens) sreq.add_tokens(t);
+    kvcache::proto::SealResponse sresp;
+    ASSERT_TRUE(stub_->Seal(&sctx, sreq, &sresp).ok());
+
+    // (a) Lookup with a wrong tenant string but the RIGHT hash should
+    // hit — the explicit field wins.
+    {
+        ::grpc::ClientContext lctx;
+        kvcache::proto::LookupRequest lreq;
+        lreq.set_tenant_id("totally-wrong-string");
+        lreq.set_tenant_id_hash(TenantIdHash(tenant_id_));  // correct hash
+        lreq.set_model_id_hash(ModelIdHash(model_id_));
+        for (uint32_t t : tokens) lreq.add_tokens(t);
+        kvcache::proto::LookupResponse lresp;
+        ASSERT_TRUE(stub_->Lookup(&lctx, lreq, &lresp).ok());
+        EXPECT_TRUE(lresp.hit())
+            << "explicit tenant_id_hash must override the string";
+    }
+
+    // (b) Lookup with the right string but a bogus non-zero hash
+    // should MISS — server prefers the field.
+    {
+        ::grpc::ClientContext lctx;
+        kvcache::proto::LookupRequest lreq;
+        lreq.set_tenant_id(tenant_id_);
+        lreq.set_tenant_id_hash(0xDEADBEEFDEADBEEFull);  // bogus
+        lreq.set_model_id_hash(ModelIdHash(model_id_));
+        for (uint32_t t : tokens) lreq.add_tokens(t);
+        kvcache::proto::LookupResponse lresp;
+        ASSERT_TRUE(stub_->Lookup(&lctx, lreq, &lresp).ok());
+        EXPECT_FALSE(lresp.hit())
+            << "bogus tenant_id_hash must miss — field wins over string";
+    }
+
+    // (c) Lookup with empty hash + correct string falls back through
+    // the SHA-1 derivation and still hits (legacy / pre-Q-6 path).
+    {
+        ::grpc::ClientContext lctx;
+        kvcache::proto::LookupRequest lreq;
+        lreq.set_tenant_id(tenant_id_);
+        // tenant_id_hash unset (== 0)
+        lreq.set_model_id_hash(ModelIdHash(model_id_));
+        for (uint32_t t : tokens) lreq.add_tokens(t);
+        kvcache::proto::LookupResponse lresp;
+        ASSERT_TRUE(stub_->Lookup(&lctx, lreq, &lresp).ok());
+        EXPECT_TRUE(lresp.hit())
+            << "zero tenant_id_hash must fall back to string-derived hash";
+    }
 }
 
 // Phase Q-5 — verifies the per-(tenant, model) ART namespace.
