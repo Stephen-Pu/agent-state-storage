@@ -49,6 +49,7 @@ set(NODE_CLUSTER_SRCS
     ${KVCACHE_NODE_SRC}/cluster/membership_fsm.cpp
     ${KVCACHE_NODE_SRC}/cluster/node_registrar.cpp
     ${KVCACHE_NODE_SRC}/cluster/node_directory.cpp
+    ${KVCACHE_NODE_SRC}/cluster/bloom_publisher.cpp
 )
 
 set(NODE_ROUTING_SRCS
@@ -139,6 +140,11 @@ kvcache_add_test(test_hrw               routing/hrw_test.cpp                 ${N
 kvcache_add_test(test_node_registry     cluster/node_registry_test.cpp
                   ${NODE_CLUSTER_SRCS} ${NODE_ROUTING_SRCS})
 target_link_libraries(test_node_registry PRIVATE CURL::libcurl nlohmann_json::nlohmann_json)
+
+# Phase K-5: BloomPublisher + NodeDirectory sketch fan-out.
+kvcache_add_test(test_bloom_publisher   cluster/bloom_publisher_test.cpp
+                  ${NODE_CLUSTER_SRCS} ${NODE_ROUTING_SRCS})
+target_link_libraries(test_bloom_publisher PRIVATE CURL::libcurl nlohmann_json::nlohmann_json)
 kvcache_add_test(test_bloom_sketch      routing/bloom_sketch_test.cpp        ${NODE_ROUTING_SRCS})
 
 kvcache_add_test(test_quota             qos/quota_test.cpp                   ${NODE_QOS_SRCS})

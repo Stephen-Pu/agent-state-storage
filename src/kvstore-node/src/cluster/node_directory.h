@@ -23,11 +23,14 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <memory>
+#include <span>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include "cluster/etcd_client.h"
+#include "routing/bloom_sketch.h"
 #include "routing/hrw.h"
 
 namespace kvcache::node::cluster {
@@ -52,6 +55,10 @@ class NodeDirectory {
         // published yet (or the leader's lease expired mid-failover).
         // Empty disables the ClusterView path entirely.
         std::string view_key = "/kvcache/cluster/view";
+        // Phase K-5 — prefix the directory watches for peer
+        // bloom-sketch publications. Each entry is a BloomPublisher
+        // blob (header + bit array). Empty disables the sketch path.
+        std::string sketch_prefix = "/kvcache/sketches/";
     };
 
     NodeDirectory(IEtcdClient* etcd, routing::HrwRing* ring);
@@ -73,11 +80,30 @@ class NodeDirectory {
 
     std::size_t NodeCount() const noexcept;
 
+    // Phase K-5 — query a peer's published bloom sketch. Returns
+    // false when (a) we have no sketch from `node_id` (the peer
+    // hasn't published yet, or its lease expired), or (b) the
+    // sketch says it doesn't have the key. Returns true if the
+    // peer's sketch says "I MIGHT have it" — false positives are
+    // tolerable; the caller routes a probe to that peer and
+    // verifies with a real Lookup.
+    bool PeerMaybeHas(const std::string& node_id,
+                       std::span<const uint8_t> key) const;
+
+    // Number of peers whose sketch we have observed. Useful for
+    // tests + metrics.
+    std::size_t SketchCount() const noexcept;
+
    private:
     void OnWatch(const WatchEvent& ev);
     // Phase K-3 — single-key watcher on the CP's ClusterView snapshot.
     // Replaces the entire table in one go from the JSON payload.
     void OnClusterViewWatch(const WatchEvent& ev);
+    // Phase K-5 — sketch watcher: PUT installs a peer's sketch,
+    // DELETE drops it.
+    void OnSketchWatch(const WatchEvent& ev);
+    // Apply a wire-encoded sketch blob to the in-memory map.
+    void ApplyPeerSketch(const std::string& node_id, const std::string& blob);
     // Apply a serialized ClusterView JSON to the in-memory table.
     // Caller does NOT hold `mu_`; the function takes it internally.
     // Returns true if the view was accepted (epoch fresh enough).
@@ -99,8 +125,9 @@ class NodeDirectory {
     IEtcdClient*           etcd_;
     routing::HrwRing*      ring_;        // not owned
     Options                opts_;
-    WatchHandle            watch_handle_      = 0;
-    WatchHandle            view_watch_handle_ = 0;
+    WatchHandle            watch_handle_       = 0;
+    WatchHandle            view_watch_handle_  = 0;
+    WatchHandle            sketch_watch_handle_ = 0;
     // Phase K-3 — last ClusterView epoch we've applied. Stale or
     // re-ordered events (from leader churn) are dropped if their
     // epoch isn't greater than this. Reset to 0 on leader_id
@@ -116,6 +143,12 @@ class NodeDirectory {
 
     mutable std::mutex                                mu_;
     std::unordered_map<std::string, NodeEndpoint>     table_;
+    // Phase K-5 — per-peer sketches keyed by node_id. The
+    // AggregatedBloom inside owns its own mutex so MaybeContains
+    // doesn't need our `mu_`; we hold `mu_` only for the map
+    // lookup/insert/erase.
+    std::unordered_map<std::string,
+                       std::unique_ptr<routing::AggregatedBloom>> sketches_;
     std::atomic<bool>                                 running_{false};
 };
 

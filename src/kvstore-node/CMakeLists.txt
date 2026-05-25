@@ -42,6 +42,7 @@ set(NODE_CORE_SRCS
     src/cluster/membership_fsm.cpp
     src/cluster/node_registrar.cpp
     src/cluster/node_directory.cpp
+    src/cluster/bloom_publisher.cpp
     # routing
     src/routing/hrw.cpp
     src/routing/bloom_sketch.cpp

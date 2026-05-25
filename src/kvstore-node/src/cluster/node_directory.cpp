@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <thread>
 
+#include "cluster/bloom_publisher.h"  // DecodeBloomSnapshot
 #include "cluster/node_registrar.h"  // for Decode/EncodeNodeValue
 
 namespace kvcache::node::cluster {
@@ -79,6 +80,23 @@ bool NodeDirectory::Start(std::string* err) {
             [this](const WatchEvent& ev) { OnClusterViewWatch(ev); });
         // View-watch failure is non-fatal: prefix mode keeps working.
     }
+
+    // Phase K-5 — seed + watch peer bloom sketches. Independent of
+    // both the prefix and view paths; sketches are routing hints,
+    // not membership data. A failure here is benign (router falls
+    // back to pure HRW with no overlap bias).
+    if (!opts_.sketch_prefix.empty()) {
+        std::string sget_err;
+        auto sk_seed = etcd_->GetPrefix(opts_.sketch_prefix, &sget_err);
+        for (const auto& kv : sk_seed) {
+            const std::string node_id =
+                KeyToNodeId(kv.key, opts_.sketch_prefix);
+            if (node_id.empty()) continue;
+            ApplyPeerSketch(node_id, kv.value);
+        }
+        sketch_watch_handle_ = etcd_->WatchPrefix(opts_.sketch_prefix,
+            [this](const WatchEvent& ev) { OnSketchWatch(ev); });
+    }
     return true;
 }
 
@@ -92,6 +110,58 @@ void NodeDirectory::Stop() {
         etcd_->Unwatch(view_watch_handle_);
         view_watch_handle_ = 0;
     }
+    if (sketch_watch_handle_ != 0 && etcd_) {
+        etcd_->Unwatch(sketch_watch_handle_);
+        sketch_watch_handle_ = 0;
+    }
+}
+
+// Phase K-5 — peer sketch handlers.
+void NodeDirectory::OnSketchWatch(const WatchEvent& ev) {
+    const std::string node_id =
+        KeyToNodeId(ev.kv.key, opts_.sketch_prefix);
+    if (node_id.empty()) return;
+    if (ev.type == WatchEventType::kDelete) {
+        std::lock_guard lk(mu_);
+        sketches_.erase(node_id);
+        return;
+    }
+    ApplyPeerSketch(node_id, ev.kv.value);
+}
+
+void NodeDirectory::ApplyPeerSketch(const std::string& node_id,
+                                      const std::string& blob) {
+    routing::BloomParams params{0, 0};
+    std::vector<uint8_t> bytes;
+    if (!DecodeBloomSnapshot(blob, &params, &bytes)) return;
+    std::lock_guard lk(mu_);
+    auto it = sketches_.find(node_id);
+    if (it == sketches_.end()) {
+        auto fresh = std::make_unique<routing::AggregatedBloom>(params);
+        fresh->Set(params, std::move(bytes));
+        sketches_.emplace(node_id, std::move(fresh));
+    } else {
+        it->second->Set(params, std::move(bytes));
+    }
+}
+
+bool NodeDirectory::PeerMaybeHas(const std::string& node_id,
+                                   std::span<const uint8_t> key) const {
+    // Snapshot the pointer under our mutex; AggregatedBloom's own
+    // mutex handles the read.
+    routing::AggregatedBloom* sketch = nullptr;
+    {
+        std::lock_guard lk(mu_);
+        auto it = sketches_.find(node_id);
+        if (it == sketches_.end()) return false;
+        sketch = it->second.get();
+    }
+    return sketch->MaybeContains(key);
+}
+
+std::size_t NodeDirectory::SketchCount() const noexcept {
+    std::lock_guard lk(mu_);
+    return sketches_.size();
 }
 
 // Phase K-3 — incoming events on /kvcache/cluster/view. Delete is the
