@@ -222,6 +222,95 @@ TEST(NodeDirectoryTest, AdoptsClusterViewSnapshot) {
     dir.Stop();
 }
 
+// Phase R-3 — chaos: full leader handover under in-flight membership.
+//
+// Scenario the test pins down:
+//   t0: Leader L1 publishes view {a}, NodeDirectory in view-mode.
+//   t1: node-b registers via NodeRegistrar. View-mode is active so
+//       the prefix watch is detached — the directory does NOT see
+//       node-b yet. (R-3's "in-flight membership during view-mode".)
+//   t2: Leader L1 dies — view key deleted. NodeDirectory reopens
+//       the prefix watch, re-seeds via GetPrefix, picks up node-b.
+//       Table converges to {a, b}.
+//   t3: Leader L2 (different leader_id, epoch=1) publishes view {b}.
+//       NodeDirectory adopts L2's view, detaches the prefix watch,
+//       table flips to {b}.
+//
+// This exercises every state transition K-4 introduced + R-2's
+// crash-style cleanup + K-3's new-leader epoch reset. If any one of
+// them regresses, the test fails at a recognisable step.
+TEST(NodeDirectoryTest, LeaderChurnHandoverConverges) {
+    InMemoryEtcdClient::Options eo;
+    eo.lease_sweep_interval = std::chrono::milliseconds(50);
+    InMemoryEtcdClient etcd(eo);
+    HrwRing ring;
+    NodeDirectory dir(&etcd, &ring);
+    std::string err;
+    ASSERT_TRUE(dir.Start(&err)) << err;
+
+    // ---- t0: L1 publishes {a} ----
+    const std::string v_l1 = R"({
+        "epoch": 1, "leader_id": "L1",
+        "nodes": [{"node_id":"a","host":"10.0.0.1","grpc_port":7000}]
+    })";
+    auto l1_lease = etcd.LeaseGrant(/*ttl=*/1, &err);
+    ASSERT_NE(l1_lease, kNoLease) << err;
+    ASSERT_TRUE(etcd.Put("/kvcache/cluster/view", v_l1, l1_lease,
+                          nullptr, &err));
+    ASSERT_TRUE(WaitFor([&] {
+        auto ids = dir.NodeIds();
+        return ids.size() == 1 && ids[0] == "a";
+    }));
+
+    // ---- t1: node-b registers during view-mode (must be invisible) ----
+    NodeRegistrar::Options ob{};
+    ob.node_id = "b"; ob.advertise_host = "10.0.0.2"; ob.grpc_port = 7001;
+    NodeRegistrar reg_b(&etcd, ob);
+    ASSERT_TRUE(reg_b.Start(&err)) << err;
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    EXPECT_EQ(dir.NodeCount(), 1u)
+        << "view-mode must hide prefix-watch events";
+
+    // ---- t2: L1 dies (lease expires; sweeper deletes the view key) ----
+    // NodeDirectory reopens the prefix watch + re-seeds via
+    // GetPrefix. node-a in this test was NEVER in /kvcache/nodes/
+    // (we manually PUT the view key without a matching registrar),
+    // so re-seed picks up ONLY node-b. Table flips {a} → {b}
+    // atomically; we don't see an interim {a,b}.
+    ASSERT_TRUE(WaitFor([&] {
+        auto ids = dir.NodeIds();
+        return ids.size() == 1 && ids[0] == "b";
+    }, std::chrono::seconds(3)));
+    EXPECT_FALSE(dir.Resolve("a").has_value())
+        << "node-a was only in the view (not the registrar prefix); "
+           "re-seed must drop it";
+    EXPECT_TRUE(dir.Resolve("b").has_value());
+
+    // ---- t3: L2 takes over with a different leader_id ----
+    // Epoch=1 is normally below L1's epoch=1 threshold but the
+    // leader_id change resets the threshold (per K-3 semantics)
+    // so L2's view is accepted.
+    const std::string v_l2 = R"({
+        "epoch": 1, "leader_id": "L2",
+        "nodes": [
+          {"node_id":"a","host":"10.0.0.1","grpc_port":7000},
+          {"node_id":"b","host":"10.0.0.2","grpc_port":7001},
+          {"node_id":"c","host":"10.0.0.3","grpc_port":7002}
+        ]
+    })";
+    auto l2_lease = etcd.LeaseGrant(60, &err);  // long-lived
+    ASSERT_TRUE(etcd.Put("/kvcache/cluster/view", v_l2, l2_lease,
+                          nullptr, &err));
+    ASSERT_TRUE(WaitFor([&] {
+        auto ids = dir.NodeIds();
+        return ids.size() == 3;
+    }, std::chrono::seconds(2)));
+    EXPECT_TRUE(dir.Resolve("c").has_value());
+
+    reg_b.Stop();
+    dir.Stop();
+}
+
 // Phase R-2 — chaos: a kvstore-node pod crashes mid-flight. The
 // crash means NO graceful LeaseRevoke happens; the etcd lease just
 // stops getting keepalive-d and eventually expires on its own.
