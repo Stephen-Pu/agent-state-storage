@@ -222,6 +222,58 @@ TEST(NodeDirectoryTest, AdoptsClusterViewSnapshot) {
     dir.Stop();
 }
 
+// Phase R-2 — chaos: a kvstore-node pod crashes mid-flight. The
+// crash means NO graceful LeaseRevoke happens; the etcd lease just
+// stops getting keepalive-d and eventually expires on its own.
+// NodeDirectory should observe the delete event from the etcd
+// sweeper and converge to the remaining membership within
+// ~TTL + sweep_interval.
+TEST(NodeDirectoryTest, CrashedNodeLeaseExpiryConverges) {
+    // Tight sweeper interval so the test runs quickly without
+    // changing the production default (100 ms).
+    InMemoryEtcdClient::Options eo;
+    eo.lease_sweep_interval = std::chrono::milliseconds(50);
+    InMemoryEtcdClient etcd(eo);
+    HrwRing ring;
+    NodeDirectory dir(&etcd, &ring);
+    std::string err;
+    ASSERT_TRUE(dir.Start(&err)) << err;
+
+    // Add a "graceful" peer via the registrar so we have something
+    // to converge ONTO (the lease-expiry case must converge to
+    // a CORRECT membership, not just to zero).
+    NodeRegistrar::Options ok{};
+    ok.node_id = "node-ok"; ok.advertise_host = "10.0.0.1"; ok.grpc_port = 7000;
+    NodeRegistrar reg_ok(&etcd, ok);
+    ASSERT_TRUE(reg_ok.Start(&err)) << err;
+
+    // Simulate a crashed peer by putting a leased key WITHOUT a
+    // matching NodeRegistrar — no keepalive thread, so the lease
+    // expires after TTL on its own. TTL=1s + 50ms sweep = ~1.1s
+    // convergence.
+    auto crashed_lease = etcd.LeaseGrant(/*ttl_seconds=*/1, &err);
+    ASSERT_NE(crashed_lease, kNoLease) << err;
+    const std::string crashed_val =
+        EncodeNodeValue("node-crashed", "10.0.0.99", 9999);
+    ASSERT_TRUE(etcd.Put("/kvcache/nodes/node-crashed", crashed_val,
+                          crashed_lease, nullptr, &err)) << err;
+
+    ASSERT_TRUE(WaitFor([&] { return dir.NodeCount() == 2; }));
+    ASSERT_TRUE(dir.Resolve("node-crashed").has_value());
+
+    // Wait for the lease sweeper to expire the crashed entry.
+    ASSERT_TRUE(WaitFor(
+        [&] { return !dir.Resolve("node-crashed").has_value(); },
+        std::chrono::seconds(3)));
+    EXPECT_EQ(dir.NodeCount(), 1u)
+        << "after lease expiry the table should hold only node-ok";
+    EXPECT_TRUE(dir.Resolve("node-ok").has_value());
+    EXPECT_EQ(ring.NodeCount(), 1u);
+
+    reg_ok.Stop();
+    dir.Stop();
+}
+
 // Phase K-4 — when ClusterView is active the prefix watch should be
 // detached, so a subsequent /kvcache/nodes/ PUT no longer mutates the
 // directory's table. Then deleting the view-key reopens the prefix
