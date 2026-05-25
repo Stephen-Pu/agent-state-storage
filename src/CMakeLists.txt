@@ -218,3 +218,9 @@ endif()
 if(KVCACHE_BUILD_ABI AND NOT KVCACHE_BUILD_TESTS)
   add_subdirectory(adapters/trtllm)
 endif()
+
+# Phase S-1 — micro-benchmarks against the public C ABI. Built
+# alongside the test surface (they share libkvcache).
+if(KVCACHE_BUILD_ABI)
+  add_subdirectory(bench)
+endif()
