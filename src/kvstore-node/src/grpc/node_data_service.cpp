@@ -509,7 +509,19 @@ kv_ctx_t* NodeDataServiceImpl::CtxForHandle(uint64_t h) {
     kv_handle_t      h    = 0;
     kv_buffer_desc_t slot{};
     int rc = kv_reserve(ctx, &loc, request->bytes(), &h, &slot);
-    if (rc != KV_OK) return ToGrpcStatus(rc, "kv_reserve");
+    if (rc != KV_OK) {
+        // Phase G-4 — pinned-pool NOMEM is a transient backpressure
+        // signal, not a permanent failure. Attach a `retry-after-ms`
+        // trailing-metadata hint so clients can back off intelligently
+        // instead of either spinning hot or treating it as fatal.
+        // 50 ms picks a number well above typical fetch completion
+        // latency (bench_fetch p50 ≈ 7.9 ms) so a backed-off retry
+        // arrives after at least one slot has typically been freed.
+        if (rc == KV_E_NOMEM && context) {
+            context->AddTrailingMetadata("retry-after-ms", "50");
+        }
+        return ToGrpcStatus(rc, "kv_reserve");
+    }
 
     RememberHandle(h, ctx);
     // Phase K-8 — remember (th, mh) alongside the ctx so Seal can

@@ -860,3 +860,58 @@ TEST(NodeDataIsolation, CrossTenantOrModelLookupMisses) {
         kv_ctx_close(cp->ctx);
     }
 }
+
+// Phase G-4 — When the pinned-slot pool saturates, a gRPC Reserve
+// must surface RESOURCE_EXHAUSTED (so clients can distinguish
+// transient backpressure from a real internal error) AND carry a
+// `retry-after-ms` trailing-metadata hint so clients can back off
+// at a sensible cadence.
+TEST_F(NodeDataFixture, ReserveNomemReturnsResourceExhaustedWithRetryHint) {
+    // Drive Reserves until we hit NOMEM. We use modest per-call bytes
+    // and lots of attempts; the singleton's default pool eventually
+    // saturates. Hold the successful handles so they don't get
+    // recycled back into the pool before the saturating call.
+    std::vector<uint32_t> tokens;
+    for (uint32_t i = 0; i < 32; ++i) tokens.push_back(60000 + i);
+
+    bool hit = false;
+    std::vector<uint64_t> held;
+    for (int i = 0; i < 64; ++i) {
+        ::grpc::ClientContext rctx;
+        kvcache::proto::ReserveRequest rreq;
+        *rreq.mutable_locator() =
+            BuildLocator(tenant_id_, model_id_, tokens, 1024 * 1024);
+        rreq.set_bytes(1024 * 1024);
+        kvcache::proto::ReserveResponse rresp;
+        auto s = stub_->Reserve(&rctx, rreq, &rresp);
+        if (s.error_code() == ::grpc::StatusCode::RESOURCE_EXHAUSTED) {
+            // The crucial G-4 assertion: the trailing metadata carries
+            // a numeric retry hint so the engine can back off.
+            const auto& md = rctx.GetServerTrailingMetadata();
+            auto it = md.find("retry-after-ms");
+            ASSERT_NE(it, md.end())
+                << "NOMEM Reserve must include a retry-after-ms hint";
+            const std::string val(it->second.data(), it->second.size());
+            EXPECT_FALSE(val.empty());
+            EXPECT_NE(std::stoi(val), 0)
+                << "retry-after-ms hint must be a positive integer";
+            hit = true;
+            break;
+        }
+        ASSERT_TRUE(s.ok()) << "unexpected status: " << s.error_code()
+                            << " (" << s.error_message() << ")";
+        held.push_back(rresp.server_handle());
+    }
+    ASSERT_TRUE(hit) << "Reserve never saturated within 64 attempts; "
+                        "the singleton pool may be larger than expected";
+
+    // Clean up so the singleton's slot table doesn't leak into later
+    // tests in the same binary.
+    for (uint64_t h : held) {
+        ::grpc::ClientContext rctx;
+        kvcache::proto::ReleaseRequest req;
+        req.set_server_handle(h);
+        kvcache::proto::ReleaseResponse resp;
+        stub_->Release(&rctx, req, &resp);
+    }
+}
