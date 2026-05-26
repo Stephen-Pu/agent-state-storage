@@ -502,6 +502,29 @@ kv_ctx_t* NodeDataServiceImpl::CtxForHandle(uint64_t h) {
         const auto& md = context->client_metadata();
         already_forwarded = md.find(kForwardedHeader) != md.end();
     }
+    // Phase N-4 — extend tenant-cert binding to Reserve. The wire's
+    // 16-byte locator.tenant_id MUST equal SHA-1(cert_CN)[:16] when
+    // binding is enabled and the request is direct (not forwarded).
+    // Otherwise a holder of cert "tenant-a" could write into tenant
+    // "tenant-b"'s namespace by handing in the right Locator bytes.
+    if (tenant_cert_binding_enabled_.load(std::memory_order_relaxed) &&
+        !already_forwarded) {
+        const std::string cn = ClientCertCN(context);
+        if (cn.empty()) {
+            return {::grpc::StatusCode::UNAUTHENTICATED,
+                     "Reserve: client cert required for tenant binding"};
+        }
+        uint8_t expected[SHA_DIGEST_LENGTH];
+        SHA1(reinterpret_cast<const uint8_t*>(cn.data()), cn.size(),
+              expected);
+        const std::string& got = request->locator().tenant_id();
+        if (got.size() < 16 ||
+            std::memcmp(got.data(), expected, 16) != 0) {
+            return {::grpc::StatusCode::UNAUTHENTICATED,
+                     "Reserve: Locator.tenant_id does not match "
+                     "SHA-1(CN '" + cn + "')[:16]"};
+        }
+    }
     if (ring_ && !already_forwarded && !self_node_id_.empty()) {
         // The "key bytes" mirror Lookup's encoding but use the
         // Locator's 16-byte tenant_id (already bytes) directly + the

@@ -17,6 +17,7 @@
 
 #include <grpcpp/grpcpp.h>
 #include <grpcpp/security/credentials.h>
+#include <openssl/sha.h>
 
 #include <chrono>
 #include <cstdio>
@@ -363,4 +364,64 @@ TEST_F(GrpcTlsFixture, TenantCertBindingRejectsCnTenantMismatch) {
         EXPECT_TRUE(s.ok())
             << "with binding off, any tenant string should pass";
     }
+}
+
+// Phase N-4 — tenant binding extended to Reserve. A holder of
+// cert CN=X submitting a Reserve whose Locator.tenant_id is
+// SHA-1(Y)[:16] must be rejected, even if X owns a valid cert.
+// Otherwise the Lookup gate (N-3) is bypassable on the write
+// side: a tenant could SEAL into another tenant's namespace.
+TEST_F(GrpcTlsFixture, ReserveTenantCertBindingRejectsLocatorMismatch) {
+    svc_->EnableTenantCertBinding(true);
+    auto stub = StubWithMtls();
+
+    auto sha16_of = [](const std::string& s) {
+        uint8_t d[20];
+        SHA1(reinterpret_cast<const uint8_t*>(s.data()), s.size(), d);
+        return std::string(reinterpret_cast<const char*>(d), 16);
+    };
+
+    // Mismatch — Locator.tenant_id = SHA1("some-other-tenant")[:16]
+    // but cert CN is "kvcache-test-client".
+    {
+        ::grpc::ClientContext ctx;
+        ctx.set_deadline(std::chrono::system_clock::now() +
+                          std::chrono::seconds(5));
+        kvcache::proto::ReserveRequest req;
+        auto* loc = req.mutable_locator();
+        loc->set_tenant_id(sha16_of("some-other-tenant"));
+        loc->set_model_id_hash(0xC0FFEEull);
+        loc->set_prefix_hash(std::string(16, '\0'));
+        loc->mutable_range()->set_token_count(16);
+        loc->set_version(1);
+        req.set_bytes(4096);
+        kvcache::proto::ReserveResponse resp;
+        auto s = stub->Reserve(&ctx, req, &resp);
+        EXPECT_FALSE(s.ok());
+        EXPECT_EQ(s.error_code(), ::grpc::StatusCode::UNAUTHENTICATED)
+            << "mismatched Locator.tenant_id should reject; got "
+            << s.error_code() << ": " << s.error_message();
+    }
+
+    // Match — locator.tenant_id = SHA-1(CN)[:16] passes.
+    {
+        ::grpc::ClientContext ctx;
+        ctx.set_deadline(std::chrono::system_clock::now() +
+                          std::chrono::seconds(5));
+        kvcache::proto::ReserveRequest req;
+        auto* loc = req.mutable_locator();
+        loc->set_tenant_id(sha16_of("kvcache-test-client"));
+        loc->set_model_id_hash(0xC0FFEEull);
+        loc->set_prefix_hash(std::string(16, '\0'));
+        loc->mutable_range()->set_token_count(16);
+        loc->set_version(1);
+        req.set_bytes(4096);
+        kvcache::proto::ReserveResponse resp;
+        auto s = stub->Reserve(&ctx, req, &resp);
+        EXPECT_TRUE(s.ok())
+            << "matching Locator.tenant_id should pass; got "
+            << s.error_code() << ": " << s.error_message();
+    }
+
+    svc_->EnableTenantCertBinding(false);
 }
