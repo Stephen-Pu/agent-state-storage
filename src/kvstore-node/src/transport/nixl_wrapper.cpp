@@ -10,6 +10,8 @@
 // plug in behind the same INixlBackend interface once hardware is wired.
 #include "transport/nixl_wrapper.h"
 
+#include <algorithm>  // std::min
+
 #include "trace.h"
 
 #include <atomic>
@@ -187,6 +189,22 @@ bool NixlWrapper::PullSync(const PullRequest& req, uint32_t timeout_ms, std::str
     return backend_->Wait(cid, timeout_ms, err);
 }
 
+bool NixlWrapper::SubmitOneAndWait(PendingXfer& pp, Priority prio,
+                                     uint64_t tenant_hash, uint64_t bytes) {
+    // The scheduler stores `&pp` as the WorkItem user pointer; the
+    // dispatcher casts back to drive the Pull / Push. PendingXfer is
+    // owned by the caller's stack frame and outlives the dispatcher
+    // call because we wait on pp.cv before returning.
+    sched_.Submit(prio, tenant_hash, bytes, &pp);
+    {
+        std::lock_guard lk(disp_mu_);
+        disp_cv_.notify_one();
+    }
+    std::unique_lock lk(pp.mu);
+    pp.cv.wait(lk, [&] { return pp.done; });
+    return pp.ok;
+}
+
 bool NixlWrapper::ScheduledPull(const PullRequest& req, Priority prio,
                                   uint64_t tenant_hash, uint32_t timeout_ms,
                                   std::string* err) {
@@ -202,28 +220,35 @@ bool NixlWrapper::ScheduledPull(const PullRequest& req, Priority prio,
         return false;
     }
 
-    PendingXfer pp;
-    pp.kind       = PendingXfer::Kind::kPull;
-    pp.pull       = req;
-    pp.timeout_ms = timeout_ms;
-    // The scheduler stores `&pp` as the WorkItem user pointer; the
-    // dispatcher casts back to drive the Pull / Push. PendingXfer is
-    // owned by this stack frame and outlives the dispatcher call
-    // because we wait on pp.cv before returning.
-    sched_.Submit(prio, tenant_hash, req.bytes, &pp);
-
-    // Wake the dispatcher.
-    {
-        std::lock_guard lk(disp_mu_);
-        disp_cv_.notify_one();
+    // Phase S-5 — segment the transfer so the dispatcher re-arbitrates
+    // between chunks. Each segment is an independent scheduler
+    // admission; a higher-priority caller's segments interleave ahead
+    // of this one's remaining segments at every TryNext().
+    const uint64_t seg = max_segment_bytes_;
+    if (seg == 0 || req.bytes <= seg) {
+        PendingXfer pp;
+        pp.kind = PendingXfer::Kind::kPull;
+        pp.pull = req;
+        pp.timeout_ms = timeout_ms;
+        const bool ok = SubmitOneAndWait(pp, prio, tenant_hash, req.bytes);
+        if (err) *err = pp.err;
+        if (!ok) span.SetError(pp.err);
+        return ok;
     }
-
-    std::unique_lock lk(pp.mu);
-    pp.cv.wait(lk, [&] { return pp.done; });
-
-    if (err) *err = pp.err;
-    if (!pp.ok) span.SetError(pp.err);
-    return pp.ok;
+    for (uint64_t off = 0; off < req.bytes; off += seg) {
+        const uint64_t n = std::min<uint64_t>(seg, req.bytes - off);
+        PendingXfer pp;
+        pp.kind = PendingXfer::Kind::kPull;
+        pp.pull = PullRequest{req.dst_mr, req.dst_off + off,
+                              req.src_mr, req.src_off + off, n};
+        pp.timeout_ms = timeout_ms;
+        if (!SubmitOneAndWait(pp, prio, tenant_hash, n)) {
+            if (err) *err = pp.err;
+            span.SetError(pp.err);
+            return false;
+        }
+    }
+    return true;
 }
 
 bool NixlWrapper::ScheduledPush(const PushRequest& req, Priority prio,
@@ -241,23 +266,31 @@ bool NixlWrapper::ScheduledPush(const PushRequest& req, Priority prio,
         return false;
     }
 
-    PendingXfer pp;
-    pp.kind       = PendingXfer::Kind::kPush;
-    pp.push       = req;
-    pp.timeout_ms = timeout_ms;
-    sched_.Submit(prio, tenant_hash, req.bytes, &pp);
-
-    {
-        std::lock_guard lk(disp_mu_);
-        disp_cv_.notify_one();
+    const uint64_t seg = max_segment_bytes_;
+    if (seg == 0 || req.bytes <= seg) {
+        PendingXfer pp;
+        pp.kind = PendingXfer::Kind::kPush;
+        pp.push = req;
+        pp.timeout_ms = timeout_ms;
+        const bool ok = SubmitOneAndWait(pp, prio, tenant_hash, req.bytes);
+        if (err) *err = pp.err;
+        if (!ok) span.SetError(pp.err);
+        return ok;
     }
-
-    std::unique_lock lk(pp.mu);
-    pp.cv.wait(lk, [&] { return pp.done; });
-
-    if (err) *err = pp.err;
-    if (!pp.ok) span.SetError(pp.err);
-    return pp.ok;
+    for (uint64_t off = 0; off < req.bytes; off += seg) {
+        const uint64_t n = std::min<uint64_t>(seg, req.bytes - off);
+        PendingXfer pp;
+        pp.kind = PendingXfer::Kind::kPush;
+        pp.push = PushRequest{req.src_mr, req.src_off + off,
+                              req.dst_mr, req.dst_off + off, n};
+        pp.timeout_ms = timeout_ms;
+        if (!SubmitOneAndWait(pp, prio, tenant_hash, n)) {
+            if (err) *err = pp.err;
+            span.SetError(pp.err);
+            return false;
+        }
+    }
+    return true;
 }
 
 void NixlWrapper::DispatcherLoop() {

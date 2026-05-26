@@ -244,3 +244,63 @@ TEST(NixlWrapperTest, ScheduledPullCustomSchedulerOpts) {
     EXPECT_EQ(std::memcmp(src.data(), dst.data(), 32), 0);
     EXPECT_EQ(w.scheduler().Reserved(Priority::P0), (1u << 16) / 2);
 }
+
+// ---- Phase S-5: segmented ScheduledPull -----------------------------------
+
+// A transfer larger than the segment size must still produce
+// byte-correct output — segmentation is transparent to the caller.
+TEST(NixlWrapperTest, SegmentedScheduledPullIsByteCorrect) {
+    NixlWrapper w(Loopback());
+    w.SetMaxSegmentBytes(256);  // force many segments
+
+    constexpr std::size_t kBytes = 4096;  // 16 segments
+    std::vector<uint8_t> src(kBytes), dst(kBytes, 0);
+    for (std::size_t i = 0; i < kBytes; ++i) {
+        src[i] = static_cast<uint8_t>((i * 13 + 5) & 0xff);
+    }
+    std::string err;
+    auto sk = w.Register(src.data(), src.size(), &err);
+    auto dk = w.Register(dst.data(), dst.size(), &err);
+    PullRequest r{dk, 0, sk, 0, kBytes};
+    EXPECT_TRUE(w.ScheduledPull(r, Priority::P1, kSystemTenantHash, 2000, &err))
+        << err;
+    EXPECT_EQ(std::memcmp(src.data(), dst.data(), kBytes), 0)
+        << "segmented pull must reassemble the full buffer";
+}
+
+// Segmentation honours dst/src offsets: pull bytes [1024,2048) of src
+// into [1024,2048) of dst, leave the rest untouched.
+TEST(NixlWrapperTest, SegmentedScheduledPullRespectsOffsets) {
+    NixlWrapper w(Loopback());
+    w.SetMaxSegmentBytes(128);
+
+    constexpr std::size_t kBytes = 4096;
+    std::vector<uint8_t> src(kBytes, 0xEE), dst(kBytes, 0x11);
+    std::string err;
+    auto sk = w.Register(src.data(), src.size(), &err);
+    auto dk = w.Register(dst.data(), dst.size(), &err);
+    // 1 KiB starting at offset 1024.
+    PullRequest r{dk, 1024, sk, 1024, 1024};
+    EXPECT_TRUE(w.ScheduledPull(r, Priority::P1, kSystemTenantHash, 2000, &err))
+        << err;
+    for (std::size_t i = 0; i < kBytes; ++i) {
+        const uint8_t want = (i >= 1024 && i < 2048) ? 0xEE : 0x11;
+        ASSERT_EQ(dst[i], want) << "byte " << i << " wrong after segmented pull";
+    }
+}
+
+// Setting segment size to 0 disables segmentation (one scheduler item);
+// the result is still correct.
+TEST(NixlWrapperTest, ZeroSegmentSizeDisablesSegmentation) {
+    NixlWrapper w(Loopback());
+    w.SetMaxSegmentBytes(0);
+    EXPECT_EQ(w.MaxSegmentBytes(), 0u);
+    std::vector<uint8_t> src(1000, 0xAB), dst(1000, 0);
+    std::string err;
+    auto sk = w.Register(src.data(), src.size(), &err);
+    auto dk = w.Register(dst.data(), dst.size(), &err);
+    PullRequest r{dk, 0, sk, 0, 1000};
+    EXPECT_TRUE(w.ScheduledPull(r, Priority::P1, kSystemTenantHash, 1000, &err))
+        << err;
+    EXPECT_EQ(std::memcmp(src.data(), dst.data(), 1000), 0);
+}

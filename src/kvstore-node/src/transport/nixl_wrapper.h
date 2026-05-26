@@ -211,6 +211,17 @@ class NixlWrapper {
                        uint64_t tenant_hash, uint32_t timeout_ms,
                        std::string* err);
 
+    // Phase S-5 — segment size for the scheduled paths. A logical
+    // transfer larger than this is split into back-to-back segments,
+    // each submitted to the scheduler independently. Between segments
+    // the dispatcher re-arbitrates via TryNext(), so a P0 transfer
+    // that arrives mid-flight interleaves AHEAD of a large P2's
+    // remaining segments instead of waiting for it to finish (the
+    // S-3 limitation). 0 disables segmentation (one Pull = one
+    // scheduler item, original behaviour). Default 256 KiB.
+    void SetMaxSegmentBytes(uint64_t n) noexcept { max_segment_bytes_ = n; }
+    uint64_t MaxSegmentBytes() const noexcept { return max_segment_bytes_; }
+
    private:
     // Per-call state for the scheduled transfer paths. The dispatcher
     // thread fills in `ok` / `err` and notifies the caller via `cv`.
@@ -231,10 +242,19 @@ class NixlWrapper {
 
     void DispatcherLoop();
 
+    // Phase S-5 — submit ONE PendingXfer + block until the dispatcher
+    // completes it. Shared by the Pull / Push segment loops. Returns
+    // pp.ok; pp.err carries the message.
+    bool SubmitOneAndWait(PendingXfer& pp, Priority prio,
+                           uint64_t tenant_hash, uint64_t bytes);
+
     std::unique_ptr<INixlBackend> backend_;
     std::string                   name_;
 
     PriorityScheduler             sched_;
+
+    // Phase S-5 — see SetMaxSegmentBytes. 256 KiB default.
+    uint64_t                      max_segment_bytes_ = 256ull * 1024;
 
     // Dispatcher thread + its wake-up cv. Submit notifies; the loop sleeps
     // when sched_ has no work and stop_ is false.
