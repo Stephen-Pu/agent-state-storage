@@ -216,6 +216,33 @@ int main(int argc, char** argv) {
                 svc.EnableForwarding(node_id, ring.get(), directory.get());
                 std::fprintf(stderr,
                     "kvstore-node: cross-node Lookup fan-out enabled\n");
+
+                // Phase N-2 — re-use the same TLS material the server
+                // listens with for OUTBOUND peer dials, so cross-node
+                // forwarding is encrypted + mutually-authenticated
+                // instead of falling through to InsecureChannel.
+                if (!tls_ca.empty() && !tls_cert.empty() && !tls_key.empty()) {
+                    auto slurp = [](const std::string& p) {
+                        std::FILE* f = std::fopen(p.c_str(), "rb");
+                        if (!f) return std::string{};
+                        std::string out;
+                        char buf[4096];
+                        while (auto n = std::fread(buf, 1, sizeof(buf), f)) {
+                            out.append(buf, n);
+                        }
+                        std::fclose(f);
+                        return out;
+                    };
+                    const auto ca_pem   = slurp(tls_ca);
+                    const auto cert_pem = slurp(tls_cert);
+                    const auto key_pem  = slurp(tls_key);
+                    if (!ca_pem.empty() && !cert_pem.empty() && !key_pem.empty()) {
+                        svc.EnableMtlsClient(ca_pem, cert_pem, key_pem,
+                                              /*target_override=*/"");
+                        std::fprintf(stderr,
+                            "kvstore-node: peer-stub mTLS enabled\n");
+                    }
+                }
             }
 
             // Phase K-8 — bloom publisher. Bound to the same lease as

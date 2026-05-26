@@ -77,6 +77,18 @@ class NodeDataServiceImpl final : public kvcache::proto::NodeData::Service {
     // pointer is non-owning and must outlive the service.
     void EnableSketchPublishing(cluster::BloomPublisher* publisher);
 
+    // Phase N-2 — install mTLS material the service should use when
+    // it dials peers for cross-node forwarding. When unset (default)
+    // GetPeerStub falls back to InsecureChannelCredentials. The PEM
+    // material is COPIED into the service so callers can free their
+    // buffers. SetSslTargetNameOverride is what the cert's SAN /
+    // CN must match — operators emit one cluster-wide leaf so all
+    // peers present the same identity.
+    void EnableMtlsClient(std::string ca_pem,
+                           std::string cert_pem,
+                           std::string key_pem,
+                           std::string ssl_target_name_override);
+
     ::grpc::Status Lookup(::grpc::ServerContext*               context,
                             const kvcache::proto::LookupRequest* request,
                             kvcache::proto::LookupResponse*      response) override;
@@ -157,6 +169,14 @@ class NodeDataServiceImpl final : public kvcache::proto::NodeData::Service {
     cluster::NodeDirectory*                  directory_ = nullptr;
     // Phase K-8 — set by EnableSketchPublishing.
     cluster::BloomPublisher*                 publisher_ = nullptr;
+
+    // Phase N-2 — mTLS material for outbound peer dials. Empty when
+    // EnableMtlsClient was never called; in that case GetPeerStub
+    // falls back to InsecureChannelCredentials.
+    std::string                              peer_tls_ca_;
+    std::string                              peer_tls_cert_;
+    std::string                              peer_tls_key_;
+    std::string                              peer_tls_ssl_target_override_;
 
     // Per-peer NodeData stub cache. The Channel keeps itself reusable
     // across RPCs; the stub is light-weight on top.

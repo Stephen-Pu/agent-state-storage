@@ -161,6 +161,21 @@ void NodeDataServiceImpl::EnableSketchPublishing(
     publisher_ = publisher;
 }
 
+void NodeDataServiceImpl::EnableMtlsClient(std::string ca_pem,
+                                            std::string cert_pem,
+                                            std::string key_pem,
+                                            std::string ssl_target_name_override) {
+    // Drop any existing cached stubs — they were built against the
+    // old credentials. Subsequent GetPeerStub calls will rebuild them
+    // with the SSL channel.
+    std::lock_guard<std::mutex> lk(stub_mu_);
+    peer_tls_ca_                   = std::move(ca_pem);
+    peer_tls_cert_                 = std::move(cert_pem);
+    peer_tls_key_                  = std::move(key_pem);
+    peer_tls_ssl_target_override_  = std::move(ssl_target_name_override);
+    stubs_.clear();
+}
+
 void NodeDataServiceImpl::EnableForwarding(std::string self_node_id,
                                             routing::HrwRing* ring,
                                             cluster::NodeDirectory* directory) {
@@ -215,10 +230,29 @@ NodeDataServiceImpl::GetPeerStub(const std::string& node_id) {
     auto ep = directory_->Resolve(node_id);
     if (!ep.has_value()) return nullptr;
 
-    auto channel = ::grpc::CreateChannel(ep->dial_target,
+    // Phase N-2 — pick channel credentials. mTLS is the production
+    // path (EnableMtlsClient called); the insecure fallback is for
+    // tests + dev rigs that never wire any cert material.
+    std::shared_ptr<::grpc::ChannelCredentials> creds;
+    std::shared_ptr<::grpc::Channel> channel;
+    if (!peer_tls_ca_.empty() && !peer_tls_cert_.empty() &&
+        !peer_tls_key_.empty()) {
+        ::grpc::SslCredentialsOptions sopts;
+        sopts.pem_root_certs  = peer_tls_ca_;
+        sopts.pem_cert_chain  = peer_tls_cert_;
+        sopts.pem_private_key = peer_tls_key_;
+        creds = ::grpc::SslCredentials(sopts);
+        ::grpc::ChannelArguments cargs;
+        if (!peer_tls_ssl_target_override_.empty()) {
+            cargs.SetSslTargetNameOverride(peer_tls_ssl_target_override_);
+        }
+        channel = ::grpc::CreateCustomChannel(ep->dial_target, creds, cargs);
+    } else {
+        channel = ::grpc::CreateChannel(ep->dial_target,
                                           ::grpc::InsecureChannelCredentials());
-    auto stub    = kvcache::proto::NodeData::NewStub(channel);
-    auto entry   = std::make_shared<PeerStub>();
+    }
+    auto stub  = kvcache::proto::NodeData::NewStub(channel);
+    auto entry = std::make_shared<PeerStub>();
     entry->channel = std::move(channel);
     entry->stub    = std::move(stub);
 
