@@ -304,3 +304,59 @@ TEST(NixlWrapperTest, ZeroSegmentSizeDisablesSegmentation) {
         << err;
     EXPECT_EQ(std::memcmp(src.data(), dst.data(), 1000), 0);
 }
+
+// ---- Phase S-6: concurrent + segmented stress (deadlock regression) -------
+
+// Reproduces the notify-after-destroy deadlock fixed in S-6: many
+// threads each issue segmented ScheduledPulls in a tight loop, so the
+// dispatcher cycles submit→complete→destroy at a high rate. Before the
+// fix (dispatcher notified pp->cv AFTER releasing pp->mu, allowing the
+// woken caller to destroy the stack PendingXfer before the notify),
+// this wedged within a fraction of a second. The test must finish all
+// transfers — a hang here is the regression.
+TEST(NixlWrapperTest, ConcurrentSegmentedStressDoesNotDeadlock) {
+    NixlWrapper w(Loopback());
+    w.SetMaxSegmentBytes(4096);  // tiny segments → max submit/complete churn
+
+    constexpr int kThreads = 6;
+    constexpr int kIters   = 40;
+    constexpr std::size_t kBytes = 256 * 1024;  // 64 segments each
+
+    std::vector<std::vector<uint8_t>> src(kThreads,
+                                           std::vector<uint8_t>(kBytes, 0xC3));
+    std::vector<std::vector<uint8_t>> dst(kThreads,
+                                           std::vector<uint8_t>(kBytes, 0));
+    std::vector<MrKey> sk(kThreads), dk(kThreads);
+    {
+        std::string err;
+        for (int i = 0; i < kThreads; ++i) {
+            sk[i] = w.Register(src[i].data(), src[i].size(), &err);
+            dk[i] = w.Register(dst[i].data(), dst[i].size(), &err);
+        }
+    }
+
+    std::atomic<int> ok_threads{0};
+    std::vector<std::thread> ts;
+    for (int i = 0; i < kThreads; ++i) {
+        ts.emplace_back([&, i] {
+            for (int it = 0; it < kIters; ++it) {
+                PullRequest r{dk[i], 0, sk[i], 0, kBytes};
+                std::string e;
+                if (!w.ScheduledPull(r, Priority::P1,
+                                      static_cast<uint64_t>(i), 5000, &e)) {
+                    return;  // leave ok_threads unincremented → test fails
+                }
+            }
+            ok_threads.fetch_add(1);
+        });
+    }
+    for (auto& t : ts) t.join();
+
+    EXPECT_EQ(ok_threads.load(), kThreads)
+        << "a thread failed or the dispatcher deadlocked under "
+           "concurrent segmented load";
+    // Spot-check correctness of the last writer's buffer.
+    for (std::size_t b = 0; b < kBytes; ++b) {
+        ASSERT_EQ(dst[kThreads - 1][b], 0xC3) << "byte " << b << " wrong";
+    }
+}

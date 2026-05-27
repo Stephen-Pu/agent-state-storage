@@ -40,7 +40,7 @@ namespace {
 
 constexpr std::size_t kPrefixTokens  = 32;
 constexpr std::size_t kBytesPerToken = 64 * 1024;          // 64 KiB
-constexpr auto        kDuration      = std::chrono::seconds(3);
+constexpr auto        kDuration      = std::chrono::milliseconds(1200);
 // Background pumps full-tilt; the others throttle to keep the queue
 // from filling beyond what scheduling decisions can affect.
 constexpr auto        kInteractiveGap = std::chrono::milliseconds(50);
@@ -88,7 +88,7 @@ void SealOne(kv_ctx_t* ctx, const std::vector<uint32_t>& tokens,
 int main() {
     const std::size_t bytes_per_fetch = kPrefixTokens * kBytesPerToken;
     std::printf("kvcache bench: priority-class preemption\n");
-    std::printf("  duration: %lld s\n  bytes/fetch: %zu KiB\n\n",
+    std::printf("  duration: %lld ms\n  bytes/fetch: %zu KiB\n\n",
                   static_cast<long long>(kDuration.count()),
                   bytes_per_fetch / 1024);
 

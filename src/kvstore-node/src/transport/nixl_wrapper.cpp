@@ -11,6 +11,7 @@
 #include "transport/nixl_wrapper.h"
 
 #include <algorithm>  // std::min
+#include <chrono>     // dispatcher timed wait
 
 #include "trace.h"
 
@@ -298,7 +299,18 @@ void NixlWrapper::DispatcherLoop() {
         // Wait for either work to appear or shutdown.
         {
             std::unique_lock lk(disp_mu_);
-            disp_cv_.wait(lk, [&] {
+            // Phase S-6 — bounded timed wait (not an indefinite one).
+            // The drain loop below can leave queued-but-not-yet-
+            // admissible work, and under the high submission rate that
+            // segmentation (S-5) produces there is a narrow window
+            // where a Submit's notify_one races the dispatcher's
+            // transition back into wait(). A plain wait() can then
+            // sleep with work outstanding (observed as a hard hang
+            // under 6-thread × 32-segment load). Re-checking HasWork()
+            // every few ms turns any missed wake-up into at most a
+            // few-ms latency blip instead of a deadlock — cheap
+            // because an idle dispatcher otherwise does nothing.
+            disp_cv_.wait_for(lk, std::chrono::milliseconds(2), [&] {
                 return stop_.load(std::memory_order_acquire) ||
                        sched_.HasWork();
             });
@@ -323,14 +335,23 @@ void NixlWrapper::DispatcherLoop() {
             }
             sched_.OnComplete(w->id);
 
-            // Hand the result back to the caller.
+            // Hand the result back to the caller. The notify_one MUST
+            // happen while pp->mu is still held: once `done` is true
+            // and the lock is released, the waiting caller's predicate
+            // passes and it returns from SubmitOneAndWait, destroying
+            // this stack-allocated PendingXfer — including pp->cv.
+            // Notifying a destroyed condition_variable is UB and (under
+            // the high segment-cycle rate S-5 produces) corrupts the
+            // NEXT segment's cv, wedging its wait permanently. Holding
+            // the lock across notify_one keeps the waiter parked until
+            // the notify completes, so pp stays alive.
             {
                 std::lock_guard lk(pp->mu);
                 pp->ok   = ok;
                 pp->err  = std::move(local_err);
                 pp->done = true;
+                pp->cv.notify_one();
             }
-            pp->cv.notify_one();
         }
         // Loop: re-evaluate HasWork (a non-admissible class may still be
         // waiting on credit, in which case we'll sleep until OnComplete on

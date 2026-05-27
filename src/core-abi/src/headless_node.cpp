@@ -133,6 +133,10 @@ bool HeadlessNode::Init(const Options& opts, std::string* err) {
     if (!backend) return false;
     auto* backend_raw = backend.get();
     nixl_ = std::make_unique<node::transport::NixlWrapper>(std::move(backend));
+    // Phase S-6 — optional segment-size override (bench knob).
+    if (opts.nixl_segment_bytes_set) {
+        nixl_->SetMaxSegmentBytes(opts.nixl_segment_bytes);
+    }
 
     // Inject the backend's RegisterRegion into the pinned tier options
     // (caller-supplied callback wins if they already wired one).

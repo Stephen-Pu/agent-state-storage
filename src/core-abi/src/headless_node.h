@@ -47,6 +47,14 @@ class HeadlessNode {
         // from the pinned-tier slot pool. 0 = OS-picked port.
         std::string nixl_bind_host = "127.0.0.1";
         uint32_t    nixl_bind_port = 0;
+        // Phase S-6 — NixlWrapper segment size for scheduled transfers
+        // (see NixlWrapper::SetMaxSegmentBytes). When `set` is false
+        // the wrapper keeps its own 256 KiB default; when true the
+        // value is applied (0 disables segmentation entirely). Used
+        // by benches to compare segmentation ON vs OFF; production
+        // leaves it unset.
+        bool        nixl_segment_bytes_set = false;
+        uint64_t    nixl_segment_bytes     = 0;
         // Optional ART snapshot file. If set and the file exists at Init
         // time, the in-memory ART is restored from it — faster than the
         // RocksDB sealed-chunks scan. If the file is missing or invalid,

@@ -63,6 +63,13 @@ void ApplyNixlEnvOverrides(kvcache::abi::HeadlessNode::Options* opts) {
     if (const char* p = std::getenv("KVCACHE_NIXL_BIND_PORT"); p && *p) {
         opts->nixl_bind_port = static_cast<uint32_t>(std::atoi(p));
     }
+    // Phase S-6 — segment-size knob for the priority-preemption bench.
+    // Presence (even "0") counts as an explicit override.
+    if (const char* s = std::getenv("KVCACHE_NIXL_SEGMENT_BYTES"); s && *s) {
+        opts->nixl_segment_bytes_set = true;
+        opts->nixl_segment_bytes =
+            static_cast<uint64_t>(std::strtoull(s, nullptr, 10));
+    }
 }
 
 }  // namespace
