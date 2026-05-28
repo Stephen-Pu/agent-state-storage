@@ -56,6 +56,7 @@ from vllm.distributed.kv_transfer.kv_connector.v1.base import (  # noqa: F401
 )
 
 from kvcache_vllm.connector import VllmKVConnector
+from kvcache_vllm.layer_accumulator import LayerAccumulator
 
 
 # Default per-token KV byte budget — sized for Llama-3-70B at FP16
@@ -114,6 +115,12 @@ class KVCacheVllmConnector(KVConnectorBase):  # type: ignore[misc]
         # KV tensors so ``start_load_kv`` / ``save_kv_layer`` can find a
         # destination buffer. Empty on the SCHEDULER role.
         self._kv_caches: dict = {}
+        # Per-layer save buffer (Phase P-3). The worker fires
+        # ``save_kv_layer`` once per attention layer during the forward
+        # pass; we fan those bytes in here and commit a single
+        # concatenated blob through the P-1 inner connector when
+        # ``wait_for_save`` fires at end-of-step.
+        self._accum = LayerAccumulator()
 
     # -- helpers ---------------------------------------------------------
 
@@ -205,41 +212,115 @@ class KVCacheVllmConnector(KVConnectorBase):  # type: ignore[misc]
     def register_kv_caches(self, kv_caches) -> None:
         """vLLM calls this once at worker startup with the model's KV
         tensors (one per attention layer). We stash the dict so
-        ``start_load_kv`` / ``save_kv_layer`` have a destination — the
-        actual per-layer fan-out is Phase P-3.
+        ``save_kv_layer`` knows the canonical layer order; the per-layer
+        fan-in itself is handled by :attr:`_accum`.
         """
         if isinstance(kv_caches, dict):
             self._kv_caches = kv_caches
+            self._accum.register_layer_order(list(kv_caches.keys()))
         else:
             # vLLM occasionally passes a list keyed by layer index;
             # normalise to dict.
             self._kv_caches = {str(i): t for i, t in enumerate(kv_caches)}
+            self._accum.register_layer_order(
+                [str(i) for i in range(len(kv_caches))])
 
     def start_load_kv(self, forward_context=None, **_kwargs) -> None:
-        """Per-layer load isn't wired in MVP; vLLM treats this as a
-        no-op when the connector matches synchronously inside
-        ``get_num_new_matched_tokens``. Phase P-3 adds a real layer-by-
-        layer Fetch driven by ``forward_context``."""
+        """Per-layer load is Phase P-3.1. vLLM treats this as a no-op
+        today because the prefix match already happens synchronously
+        inside ``get_num_new_matched_tokens`` (the inner connector
+        re-uses the recorded handle on the next Fetch). The real
+        per-layer Fetch driven by ``forward_context`` lands when we
+        wire slicing back into the engine's per-layer tensors.
+        """
         del forward_context
 
     def wait_for_layer_load(self, layer_name: str) -> None:
-        """No-op for the MVP — see ``start_load_kv``."""
+        """No-op for now — see ``start_load_kv`` (Phase P-3.1)."""
         del layer_name
 
     def save_kv_layer(
-        self, layer_name, kv_layer, attn_metadata=None, **_kwargs
+        self, layer_name, kv_layer, attn_metadata=None, **kwargs
     ) -> None:
-        """Per-layer save: deferred to P-3. The in-tree connector
-        batches all layers into one Reserve→Seal at request finish,
-        which the engine pays once. Calling this is a no-op in MVP so
-        a vLLM forward pass driving it doesn't crash; the real save
-        path runs through ``request_finished`` (or an explicit
-        ``save`` call from a wrapper script).
+        """Phase P-3: buffer one layer's KV bytes for each active
+        request. The bytes are concatenated in registered-layer order
+        when ``wait_for_save`` fires at end-of-forward and committed
+        through the P-1 inner connector as a single Reserve→Seal.
+
+        ``attn_metadata`` (or ``kwargs``) MUST expose:
+          * ``request_ids`` — iterable of strings, one per request in
+            this forward batch
+          * ``token_ids_by_request`` — ``{rid: Sequence[int]}`` with the
+            token sequence the eventual Save will Seal under
+
+        The bytes-per-request slicing is uniform: ``len(layer_bytes)``
+        is divided evenly across ``request_ids``. The single-request
+        case (the dominant prefill shape) is exact; mixed-batch sizing
+        is the engine's job to thread, and a future P-3.1 wires
+        per-request bounds through ``attn_metadata.seq_lens``.
         """
-        del layer_name, kv_layer, attn_metadata
+        rid_to_tokens = self._extract_save_targets(attn_metadata, kwargs)
+        if not rid_to_tokens:
+            return
+        layer_bytes = self._to_bytes(kv_layer)
+        if not layer_bytes:
+            return
+        nreq = len(rid_to_tokens)
+        per = len(layer_bytes) // nreq
+        for i, (rid, tokens) in enumerate(rid_to_tokens.items()):
+            chunk = layer_bytes[i * per : (i + 1) * per]
+            self._accum.accumulate(rid, layer_name, chunk)
+            if tokens:
+                self._accum.bind_request(rid, tokens)
 
     def wait_for_save(self) -> None:
-        """Saves are synchronous through the inner connector, so
-        ``get_finished`` already reports the truth. Kept for callback
-        parity. vLLM may call this without a per-request id."""
+        """Commit every buffered per-layer save through the P-1 inner
+        connector. The inner Save is synchronous (Reserve→Publish→Seal
+        all block), so this method blocks until every request's bytes
+        are sealed and visible to a subsequent Lookup. Idempotent — a
+        second call after a drain finds the buffer empty and returns
+        immediately.
+        """
+        for rid, (tokens, concat) in self._accum.drain_all().items():
+            self._inner.save(rid, tokens, concat)
         return None
+
+    # -- helpers (P-3) ---------------------------------------------------
+
+    @staticmethod
+    def _extract_save_targets(attn_metadata, kwargs) -> "dict":
+        """Pull ``{request_id: token_ids}`` out of an attn_metadata or
+        kwargs bag. Real vLLM threads this through the metadata struct
+        the engine builds per forward step; tests pass it via kwargs
+        directly. We try both — kwargs wins so tests can override.
+        """
+        rids = kwargs.get("request_ids")
+        tokens_by_request = kwargs.get("token_ids_by_request") or {}
+        if not rids and attn_metadata is not None:
+            rids = getattr(attn_metadata, "request_ids", None) or []
+            tokens_by_request = (
+                getattr(attn_metadata, "token_ids_by_request", {}) or {})
+        if not rids:
+            return {}
+        return {str(rid): list(tokens_by_request.get(rid, []))
+                for rid in rids}
+
+    @staticmethod
+    def _to_bytes(kv_layer) -> bytes:
+        """Coerce a layer payload to ``bytes``. Accepts:
+          * ``bytes`` / ``bytearray`` / ``memoryview`` (tests)
+          * objects exposing ``.tobytes()`` (numpy arrays, ctypes bufs)
+          * torch tensors (via ``.cpu().contiguous().numpy().tobytes()``)
+        """
+        if isinstance(kv_layer, (bytes, bytearray, memoryview)):
+            return bytes(kv_layer)
+        tobytes = getattr(kv_layer, "tobytes", None)
+        if callable(tobytes):
+            return tobytes()
+        if hasattr(kv_layer, "cpu"):
+            try:
+                return kv_layer.cpu().contiguous().numpy().tobytes()
+            except Exception:
+                pass
+        raise TypeError(
+            f"cannot convert kv_layer of type {type(kv_layer)!r} to bytes")
