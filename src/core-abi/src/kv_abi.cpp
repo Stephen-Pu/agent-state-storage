@@ -277,6 +277,13 @@ KV_API int kv_unregister_local_mr(kv_ctx_t* ctx, uint32_t mr_key) {
 
 KV_API int kv_metrics_scrape(char* buf, size_t cap, size_t* out_len) {
     if (!out_len && (cap == 0 || !buf)) return KV_E_INVAL;
+    // Phase D-3 — refresh ART / epoch-reclamation gauges on demand
+    // (they take the EpochManager mutex, so they're not bumped on
+    // every Seal / Release). Safe to call when no node is active —
+    // the gauges keep their last value (0 after Rm()'s seed pass).
+    if (auto* n = kvcache::abi::HeadlessNode::Active()) {
+        n->RefreshArtGauges();
+    }
     std::string body;
     kvcache::metrics::Registry::Default().Scrape(body);
     if (out_len) *out_len = body.size();

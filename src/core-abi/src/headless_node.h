@@ -145,6 +145,21 @@ class HeadlessNode {
     // the ART / events fields it touches are destroyed.
     ~HeadlessNode();
 
+    // Phase D-3 — process-wide active singleton (one HeadlessNode per
+    // process via GetOrCreate). Returns nullptr if no node has been
+    // initialised yet. Used by ``kv_metrics_scrape`` to refresh
+    // ART-side gauges on demand so a Prometheus scrape always sees
+    // current ``art_leaf_count`` / ``art_pending_retires`` /
+    // ``art_global_epoch`` without paying the EpochManager mutex on
+    // every Seal / Release.
+    static HeadlessNode* Active() noexcept;
+
+    // Phase D-3 — read the ART's leaf count + epoch-manager state and
+    // publish them into the global metrics Registry. Takes the
+    // ``retired_mu_`` mutex inside ``PendingRetires()`` so callers
+    // should batch (one call per scrape, not per Seal).
+    void RefreshArtGauges();
+
    private:
     HeadlessNode() = default;
 

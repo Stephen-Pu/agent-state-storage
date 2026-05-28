@@ -27,6 +27,13 @@ struct ReserveMetrics {
     kvcache::metrics::Gauge*   slots_in_use      = nullptr;
     kvcache::metrics::Gauge*   slots_total       = nullptr;
     kvcache::metrics::Gauge*   slots_utilization = nullptr;  // [0..1]
+    // Phase D-3 — ART / epoch-reclamation visibility. Refreshed on
+    // demand from `RefreshArtGauges()` (called once per
+    // `kv_metrics_scrape`) rather than on every Seal/Release because
+    // PendingRetires() takes the EpochManager's retired_mu_.
+    kvcache::metrics::Gauge*   art_leaf_count       = nullptr;
+    kvcache::metrics::Gauge*   art_pending_retires  = nullptr;
+    kvcache::metrics::Gauge*   art_global_epoch     = nullptr;
 };
 ReserveMetrics& Rm() {
     static ReserveMetrics m = [] {
@@ -56,6 +63,20 @@ ReserveMetrics& Rm() {
             "kv_pinned_tier_slots_utilization_ratio",
             "Fraction of pinned-tier slots in use (0=idle, 1=saturated).",
             {});
+        // Phase D-3 — ART / epoch-reclamation gauges. See ReserveMetrics.
+        x.art_leaf_count = &r.GetOrCreateGauge(
+            "kv_art_leaf_count",
+            "Number of leaves currently in the in-memory ART prefix index.",
+            {});
+        x.art_pending_retires = &r.GetOrCreateGauge(
+            "kv_art_pending_retires",
+            "Nodes on the EpochManager retire list waiting for reclamation.",
+            {});
+        x.art_global_epoch = &r.GetOrCreateGauge(
+            "kv_art_global_epoch",
+            "Monotonic counter advanced on every writer retire — a "
+            "Reclaim()-friendly proxy for write rate.",
+            {});
         // Seed each series with a zero so Scrape() emits a line for
         // it even before the first event fires — Prometheus consumers
         // and dashboards expect the metric to be present at t=0.
@@ -65,6 +86,9 @@ ReserveMetrics& Rm() {
         x.slots_in_use->Set(0.0, {});
         x.slots_total->Set(0.0, {});
         x.slots_utilization->Set(0.0, {});
+        x.art_leaf_count->Set(0.0, {});
+        x.art_pending_retires->Set(0.0, {});
+        x.art_global_epoch->Set(0.0, {});
         return x;
     }();
     return m;
@@ -110,6 +134,25 @@ HeadlessNode* HeadlessNode::GetOrCreate(const Options& opts, std::string* err) {
 void HeadlessNode::Shutdown() {
     delete g_singleton;
     g_singleton = nullptr;
+}
+
+// Phase D-3 — used by ``kv_metrics_scrape`` so a Prometheus scrape
+// always sees current ART / epoch-reclamation gauges without paying
+// the EpochManager mutex on every Seal / Release.
+HeadlessNode* HeadlessNode::Active() noexcept {
+    return g_singleton;
+}
+
+void HeadlessNode::RefreshArtGauges() {
+    node::prefix::ArtIndex* art =
+        art_wal_ ? &art_wal_->art() : art_.get();
+    if (!art) return;
+    Rm().art_leaf_count->Set(
+        static_cast<double>(art->LeafCount()), {});
+    Rm().art_pending_retires->Set(
+        static_cast<double>(art->epoch_manager().PendingRetires()), {});
+    Rm().art_global_epoch->Set(
+        static_cast<double>(art->epoch_manager().GlobalEpoch()), {});
 }
 
 HeadlessNode::~HeadlessNode() {

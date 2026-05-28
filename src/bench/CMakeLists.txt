@@ -34,5 +34,13 @@ target_include_directories(bench_priority PRIVATE
 )
 target_link_libraries(bench_priority PRIVATE kvcache)
 
+# Phase D-3 — ART tombstone-GC throughput bench.
+add_executable(bench_art_gc bench_art_gc.cpp)
+target_include_directories(bench_art_gc PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_link_libraries(bench_art_gc PRIVATE kvcache)
+
 # Convenience aggregate target.
-add_custom_target(bench DEPENDS bench_lookup bench_fetch bench_fairness bench_priority)
+add_custom_target(bench DEPENDS bench_lookup bench_fetch bench_fairness bench_priority bench_art_gc)
