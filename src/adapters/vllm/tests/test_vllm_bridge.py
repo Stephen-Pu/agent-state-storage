@@ -429,3 +429,214 @@ def test_p3_1_bridge_start_load_kv_fans_out_to_per_layer_dests():
 
     conn.request_finished(types.SimpleNamespace(request_id=save_rid))
     conn.request_finished(req)
+
+
+# ---------------------------------------------------------------------------
+# Phase P-3.2 — async load path. AsyncLoadDriver is vllm-free so the
+# thread-pool + future-tracking logic gets real unit coverage on the
+# default dev rig; the bridge wiring + is_async=True signal is exercised
+# via a skip-marked vllm-present test.
+# ---------------------------------------------------------------------------
+
+def test_p3_2_async_load_driver_round_trip_through_inner_connector():
+    """AsyncLoadDriver pre-fetches a saved blob in a worker thread;
+    polled ``finished_ids`` eventually reports completion;
+    ``pop_staging`` returns the bytes the inner connector wrote."""
+    import time
+    from kvcache_vllm.async_load import AsyncLoadDriver
+    from kvcache_vllm import VllmKVConnector
+
+    conn = VllmKVConnector(tenant_id="p32-tenant", model_id="p32-model",
+                            bytes_per_token=64)
+    tokens = list(range(3300, 3316))
+    payload = bytes((i & 0xff for i in range(16 * 64)))
+    try:
+        conn.save("rp32", tokens, payload)
+        # Second request — record the hit on the inner connector so the
+        # driver's _fetch finds entry.handle.
+        n = conn.get_num_new_matched_tokens("rp32-load", tokens, 0)
+        assert n == 16
+
+        driver = AsyncLoadDriver(conn, workers=2)
+        driver.kick_off("rp32-load", bytearray(len(payload)))
+
+        # Poll for completion. The fetch is in-memory so this is fast,
+        # but loop with a deadline so a CI hang surfaces as a clear
+        # test failure rather than a wedged process.
+        deadline = time.time() + 2.0
+        while not driver.finished_ids({"rp32-load"}):
+            assert time.time() < deadline, \
+                "async load didn't complete within 2s"
+            time.sleep(0.005)
+
+        # finished_ids is idempotent — a request stays reported until
+        # popped.
+        assert driver.finished_ids({"rp32-load"}) == {"rp32-load"}
+
+        # Pop the staging — must equal the saved bytes exactly.
+        assert driver.pop_staging("rp32-load") == payload
+
+        # After pop the driver forgets the request.
+        assert not driver.has("rp32-load")
+        assert driver.in_flight() == 0
+        driver.close()
+    finally:
+        conn.release("rp32")
+        conn.release("rp32-load")
+        conn.close()
+
+
+def test_p3_2_async_load_driver_pop_blocks_on_in_flight_future():
+    """``pop_staging`` called before ``finished_ids`` reports done MUST
+    block until the worker finishes — defensive against engines that
+    skip the ``get_finished`` poll between kick-off and pop."""
+    from kvcache_vllm.async_load import AsyncLoadDriver
+    from kvcache_vllm import VllmKVConnector
+
+    conn = VllmKVConnector(tenant_id="p32-tenant", model_id="p32-model",
+                            bytes_per_token=64)
+    tokens = list(range(3500, 3516))
+    payload = bytes(((i + 7) & 0xff for i in range(16 * 64)))
+    try:
+        conn.save("rp32b", tokens, payload)
+        conn.get_num_new_matched_tokens("rp32b-load", tokens, 0)
+
+        driver = AsyncLoadDriver(conn, workers=2)
+        driver.kick_off("rp32b-load", bytearray(len(payload)))
+        # Pop immediately — blocks until the future resolves and then
+        # returns the staged bytes.
+        assert driver.pop_staging("rp32b-load") == payload
+        driver.close()
+    finally:
+        conn.release("rp32b")
+        conn.release("rp32b-load")
+        conn.close()
+
+
+def test_p3_2_async_load_driver_cancel_clears_state_idempotently():
+    """``cancel`` removes a request from the driver bookkeeping and
+    blocks on a running future first so the worker thread can't be
+    holding the inner connector's handle when the caller releases
+    it."""
+    from kvcache_vllm.async_load import AsyncLoadDriver
+    from kvcache_vllm import VllmKVConnector
+
+    conn = VllmKVConnector(tenant_id="p32-tenant", model_id="p32-model",
+                            bytes_per_token=64)
+    tokens = list(range(3400, 3416))
+    payload = bytes((i & 0xff for i in range(16 * 64)))
+    try:
+        conn.save("rp32c", tokens, payload)
+        conn.get_num_new_matched_tokens("rp32c-load", tokens, 0)
+
+        driver = AsyncLoadDriver(conn, workers=2)
+        driver.kick_off("rp32c-load", bytearray(len(payload)))
+        driver.cancel("rp32c-load")
+        assert not driver.has("rp32c-load")
+        assert driver.in_flight() == 0
+        # pop_staging on a non-existent rid returns None — caller can
+        # fall through to the sync path.
+        assert driver.pop_staging("rp32c-load") is None
+        # Cancel is idempotent.
+        driver.cancel("rp32c-load")
+        driver.close()
+    finally:
+        conn.release("rp32c")
+        conn.release("rp32c-load")
+        conn.close()
+
+
+def test_p3_2_async_load_driver_surfaces_worker_exceptions():
+    """A failing inner connector must propagate through
+    ``finished_ids`` (and ``pop_staging``) so the engine sees the
+    failure instead of an infinite poll."""
+    from kvcache_vllm.async_load import AsyncLoadDriver
+
+    class _Boom:
+        def start_load_kv(self, rid, dst):
+            raise RuntimeError("boom")
+        def wait_for_layer_load(self, rid, cid):
+            pass
+
+    driver = AsyncLoadDriver(_Boom(), workers=1)
+    driver.kick_off("rid", bytearray(8))
+    import time
+    deadline = time.time() + 1.0
+    while True:
+        try:
+            driver.finished_ids({"rid"})
+        except RuntimeError as e:
+            assert "boom" in str(e)
+            break
+        assert time.time() < deadline, "exception didn't surface within 1s"
+        time.sleep(0.005)
+    driver.close()
+
+
+@pytest.mark.skipif(not _vllm_available(),
+                     reason="vllm not installed; install kvcache_vllm[vllm]")
+def test_p3_2_bridge_async_load_flips_is_async_and_streams_via_get_finished():
+    """Async-on bridge: ``async_load=True`` in extra-config flips the
+    second tuple element of ``get_num_new_matched_tokens`` to ``True``
+    on a hit; ``get_finished`` eventually reports the request as
+    loaded; ``start_load_kv`` then stages from the pre-fetched buffer
+    without re-fetching; per-layer drain slices the right bytes."""
+    import time
+    from kvcache_vllm.vllm_bridge import KVCacheVllmConnector
+    from vllm.distributed.kv_transfer.kv_connector.v1.base import (
+        KVConnectorRole)
+
+    extra = {"tenant_id":       "p32-bridge-tenant",
+              "model_id":        "p32-bridge-model",
+              "bytes_per_token": 64,
+              "async_load":      True,
+              "async_load_workers": 2}
+    cfg = types.SimpleNamespace(
+        kv_transfer_config=types.SimpleNamespace(
+            kv_connector_extra_config=extra,
+        ),
+    )
+    conn = KVCacheVllmConnector(cfg, KVConnectorRole.WORKER)
+    layer_order = ["L0", "L1", "L2", "L3"]
+    conn.register_kv_caches({ln: object() for ln in layer_order})
+
+    # Cold-save via the P-3 save_kv_layer fan-in path.
+    save_rid = "rp32-bridge-save"
+    tokens = list(range(4200, 4216))
+    layer_payloads = {ln: bytes((((j + 2) * (i + 5)) & 0xff
+                                  for j in range(256)))
+                       for i, ln in enumerate(layer_order)}
+    save_meta = types.SimpleNamespace(
+        request_ids=[save_rid],
+        token_ids_by_request={save_rid: tokens},
+    )
+    for ln, payload in layer_payloads.items():
+        conn.save_kv_layer(ln, payload, save_meta)
+    conn.wait_for_save()
+
+    # Second request — hit MUST flip is_async=True.
+    load_rid = "rp32-bridge-load"
+    req = types.SimpleNamespace(request_id=load_rid,
+                                  prompt_token_ids=tokens)
+    n_hit, is_async = conn.get_num_new_matched_tokens(req, 0)
+    assert n_hit == 16
+    assert is_async is True
+
+    # Poll get_finished until the load completes.
+    deadline = time.time() + 2.0
+    while load_rid not in conn.get_finished({load_rid})[0]:
+        assert time.time() < deadline, \
+            "async bridge load didn't finish within 2s"
+        time.sleep(0.005)
+
+    # Per-layer fan-out — stages from the pre-fetched buffer.
+    dests = {ln: bytearray(256) for ln in layer_order}
+    conn.start_load_kv(request_ids=[load_rid],
+                        layer_destinations={load_rid: dests})
+    for ln in layer_order:
+        conn.wait_for_layer_load(ln)
+    for ln, expected in layer_payloads.items():
+        assert bytes(dests[ln]) == expected
+
+    conn.request_finished(types.SimpleNamespace(request_id=save_rid))
+    conn.request_finished(req)

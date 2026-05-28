@@ -55,6 +55,7 @@ from vllm.distributed.kv_transfer.kv_connector.v1.base import (  # noqa: F401
     KVConnectorRole,
 )
 
+from kvcache_vllm.async_load import AsyncLoadDriver
 from kvcache_vllm.connector import VllmKVConnector
 from kvcache_vllm.layer_accumulator import LayerAccumulator, LayerSplitter
 
@@ -63,6 +64,10 @@ from kvcache_vllm.layer_accumulator import LayerAccumulator, LayerSplitter
 # (32 KiB / token across all layers + heads). Operators override via
 # ``kv_connector_extra_config.bytes_per_token``.
 _DEFAULT_BYTES_PER_TOKEN = 32 * 1024
+
+# Phase P-3.2 async-load defaults.
+_DEFAULT_ASYNC_LOAD = False
+_DEFAULT_ASYNC_LOAD_WORKERS = 4
 
 
 def _extract_extra(vllm_config) -> dict:
@@ -126,6 +131,20 @@ class KVCacheVllmConnector(KVConnectorBase):  # type: ignore[misc]
         # splitter slices it into the engine's per-layer destination
         # tensors in registered-layer order.
         self._splitter = LayerSplitter()
+        # Phase P-3.2 — async load path. When enabled, the Fetch fires
+        # in a background thread on every cache hit and the second
+        # tuple element of ``get_num_new_matched_tokens`` flips to
+        # ``True`` so vLLM defers admission until ``get_finished``
+        # reports the load complete.
+        self._async_load = bool(extra.get("async_load",
+                                            _DEFAULT_ASYNC_LOAD))
+        if self._async_load:
+            workers = int(extra.get("async_load_workers",
+                                      _DEFAULT_ASYNC_LOAD_WORKERS))
+            self._async_driver: Optional[AsyncLoadDriver] = AsyncLoadDriver(
+                self._inner, workers=max(1, workers))
+        else:
+            self._async_driver = None
 
     # -- helpers ---------------------------------------------------------
 
@@ -160,13 +179,35 @@ class KVCacheVllmConnector(KVConnectorBase):  # type: ignore[misc]
     def get_num_new_matched_tokens(
         self, request, num_computed_tokens: int
     ) -> Tuple[int, bool]:
-        """vLLM v1 returns ``(extra_tokens, is_async)``. We're
-        synchronous today so the second value is always ``False``."""
+        """vLLM v1 returns ``(extra_tokens, is_async)``.
+
+        Sync mode (default, Phase P-3.1): always returns
+        ``(n, False)`` — vLLM admits the request immediately and the
+        eventual ``start_load_kv`` blocks on the Fetch.
+
+        Async mode (P-3.2, opt-in via ``async_load`` extra-config): on
+        a hit, the Fetch is kicked off immediately in a worker thread
+        and the second tuple element flips to ``True``. vLLM then
+        polls ``get_finished`` and only proceeds with the load once
+        the request appears in the ``loaded`` set. Misses still
+        return ``(0, False)`` — there's nothing to defer.
+        """
         rid = self._request_id(request)
         tokens = self._request_tokens(request)
         n = self._inner.get_num_new_matched_tokens(
             rid, tokens, num_computed_tokens)
-        return n, False
+        if not (n > 0 and self._async_driver is not None):
+            return n, False
+        # Async hit — pre-fetch into a per-request staging buffer.
+        entry = self._inner._reqs.get(rid)
+        if not entry or not entry.handle:
+            return n, False
+        n_bytes = entry.matched_tokens * self._inner._bytes_per_token
+        if n_bytes <= 0:
+            return n, False
+        staging = bytearray(n_bytes)
+        self._async_driver.kick_off(rid, staging)
+        return n, True
 
     def update_state_after_alloc(
         self, request, blocks=None, num_external_tokens: int = 0
@@ -202,8 +243,20 @@ class KVCacheVllmConnector(KVConnectorBase):  # type: ignore[misc]
         self, finished_req_ids: Set[str]
     ) -> Tuple[Set[str], Set[str]]:
         """vLLM polls this each tick to learn which requests have
-        finished their async load / save."""
-        return self._inner.get_finished(tuple(finished_req_ids))
+        finished their async load / save.
+
+        Phase P-3.2: in async mode this is where vLLM observes that
+        a deferred load has completed. We union the inner connector's
+        baseline (sync save-completion bookkeeping) with the in-flight
+        async-load futures we've created since the last poll. A
+        request whose future has resolved goes into the ``loaded``
+        set and stays there (flag ``finished=True``) so subsequent
+        polls remain idempotent.
+        """
+        loaded, saved = self._inner.get_finished(tuple(finished_req_ids))
+        if self._async_driver is not None:
+            loaded = loaded | self._async_driver.finished_ids()
+        return loaded, saved
 
     def request_finished(self, request, *_args, **_kwargs) -> None:
         """vLLM calls this when it's about to discard a request — we
@@ -214,6 +267,11 @@ class KVCacheVllmConnector(KVConnectorBase):  # type: ignore[misc]
         """
         rid = self._request_id(request)
         self._splitter.finish_request(rid)
+        # P-3.2: cancel any in-flight async load before releasing the
+        # underlying handle, so the worker thread isn't still touching
+        # it when ``release`` frees it.
+        if self._async_driver is not None:
+            self._async_driver.cancel(rid)
         self._inner.release(rid)
 
     # -- worker-side callbacks -------------------------------------------
@@ -269,6 +327,18 @@ class KVCacheVllmConnector(KVConnectorBase):  # type: ignore[misc]
         if not request_ids:
             return
         for rid in request_ids:
+            dests = layer_destinations.get(rid, {})
+            # P-3.2 async path: a pre-fetched staging buffer is already
+            # in-flight (or done) from get_num_new_matched_tokens. The
+            # driver blocks on its future defensively in case the
+            # engine called start_load_kv before polling get_finished,
+            # then we hand the staged bytes to the splitter.
+            if self._async_driver is not None and self._async_driver.has(rid):
+                staged = self._async_driver.pop_staging(rid)
+                if staged is not None:
+                    self._splitter.stage_load(rid, staged, dests)
+                    continue
+            # Sync path (P-3.1): drive the inner Fetch + wait inline.
             entry = self._inner._reqs.get(rid)
             if not entry or not entry.handle:
                 continue
@@ -278,8 +348,7 @@ class KVCacheVllmConnector(KVConnectorBase):  # type: ignore[misc]
             staging = bytearray(n_bytes)
             cid = self._inner.start_load_kv(rid, staging)
             self._inner.wait_for_layer_load(rid, cid)
-            self._splitter.stage_load(
-                rid, bytes(staging), layer_destinations.get(rid, {}))
+            self._splitter.stage_load(rid, bytes(staging), dests)
 
     def wait_for_layer_load(self, layer_name: str) -> None:
         """Phase P-3.1: slice this layer's bytes from each staged blob
