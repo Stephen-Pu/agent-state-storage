@@ -47,4 +47,59 @@ spec:
           labels: { severity: warning }
           annotations:
             summary: "Eviction rate sustained > 100/s — capacity may be undersized"
+
+        # --- Phase G-5 — alerts keyed to the gauges actually published
+        # by the in-tree node (see kv_metrics_scrape: 4× pinned-tier +
+        # 3× ART/EBR gauges). Runbook lives at
+        # src/deploy/helm/kvcache/RUNBOOK.md — every alert annotation
+        # below points there.
+        - alert: KVCachePinnedTierSaturated
+          expr: kv_pinned_tier_slots_utilization_ratio > 0.9
+          for: 5m
+          labels: { severity: warning }
+          annotations:
+            summary: "Pinned-tier slot utilisation > 90% for 5m"
+            description: >
+              The kvstore-node's pinned-tier slot pool is sustained
+              above 90% utilisation. Reserves will start returning
+              KV_E_NOMEM if utilisation hits 100%. See RUNBOOK.md
+              §KVCachePinnedTierSaturated.
+
+        - alert: KVCacheReserveNomemSpike
+          expr: rate(kv_reserve_nomem_total[2m]) > 0
+          for: 0m
+          labels: { severity: critical }
+          annotations:
+            summary: "kv_reserve returning NOMEM — engines taking errors"
+            description: >
+              At least one Reserve has failed with KV_E_NOMEM in the
+              last 2 minutes. Engines (vLLM / SGLang / etc.) see
+              save-side errors and may fall back to recomputing
+              prefixes. See RUNBOOK.md §KVCacheReserveNomemSpike.
+
+        - alert: KVCacheArtRetireBacklog
+          expr: kv_art_pending_retires > 100000
+          for: 10m
+          labels: { severity: warning }
+          annotations:
+            summary: "ART EBR retire list > 100k entries for 10m"
+            description: >
+              The EpochManager's deferred-delete list is growing
+              faster than Reclaim() drains it. Each entry holds an
+              ART node; sustained backlog grows heap. See
+              RUNBOOK.md §KVCacheArtRetireBacklog.
+
+        - alert: KVCacheArtWritesStalled
+          expr: |
+            rate(kv_art_global_epoch[10m]) == 0
+            and kv_art_leaf_count > 0
+          for: 30m
+          labels: { severity: info }
+          annotations:
+            summary: "No ART writes for 30m on a non-empty node"
+            description: >
+              The ART has leaves but global_epoch hasn't advanced
+              in 30 minutes — no Inserts / Removes. The engine
+              may be stalled, idle, or misconfigured to skip the
+              connector. See RUNBOOK.md §KVCacheArtWritesStalled.
 {{- end -}}
