@@ -53,6 +53,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <stdexcept>  // for std::stod's exceptions on Ubuntu libstdc++
 #include <string>
 #include <vector>
 

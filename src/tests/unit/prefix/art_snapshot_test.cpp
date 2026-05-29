@@ -12,6 +12,7 @@
 #include "prefix/art_snapshot.h"
 
 #include <gtest/gtest.h>
+#include <cstring>   // std::memcmp / std::memcpy used below — CI fix
 #include <filesystem>
 #include <fstream>
 #include <random>
