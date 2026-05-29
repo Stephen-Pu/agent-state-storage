@@ -210,6 +210,45 @@ class KVCacheVllmConnector(KVConnectorBase_V1, SupportsHMA):  # type: ignore[mis
         else:
             super().__init__(vllm_config, role)
 
+    # -- lifecycle -------------------------------------------------------
+
+    def close(self) -> None:
+        """Audit-fix #7: graceful shutdown of bridge-owned resources.
+
+        vLLM doesn't call this in any version we've tested — its
+        connector lifecycle is process-scoped — but operators that
+        create / destroy connectors over a process lifetime (model
+        swap, error-recovery cycles, multi-tenant routing) would
+        otherwise leak ``AsyncLoadDriver`` worker threads since the
+        ``ThreadPoolExecutor`` is non-daemon. After ``close()``:
+          * the async driver is shut down (in-flight fetches join
+            before the executor exits — ``wait=False`` returns
+            immediately, the worker threads finish in the
+            background).
+          * subsequent calls into the bridge's async path become
+            no-ops because every async-aware method already guards
+            ``if self._async_driver is not None``.
+          * other state (``_inner``, ``_accum``, ``_splitter``) is
+            left intact — vLLM may still call ``request_finished``
+            during teardown and we want those releases to flow.
+
+        Idempotent — calling close() twice is safe.
+        """
+        if self._async_driver is not None:
+            try:
+                self._async_driver.close(wait=False)
+            finally:
+                self._async_driver = None
+
+    def __del__(self):
+        # Best-effort cleanup on GC. The standard caveats apply
+        # (interpreter shutdown ordering, no exceptions allowed) so we
+        # swallow anything close() might raise.
+        try:
+            self.close()
+        except Exception:
+            pass
+
     # -- helpers ---------------------------------------------------------
 
     @staticmethod

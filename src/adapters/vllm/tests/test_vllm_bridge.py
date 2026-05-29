@@ -791,3 +791,51 @@ def test_audit_5_extract_save_targets_omits_unmatched_rid(caplog):
         out2 = KVCacheVllmConnector._extract_save_targets(attn2, {})
     assert set(out2.keys()) == {"good"}
     assert any("empty" in r.getMessage() for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Production audit fix #7 — close() shuts down the AsyncLoadDriver's
+# ThreadPoolExecutor. Verifies the lifecycle is idempotent and
+# subsequent async-path calls become no-ops instead of touching the
+# shut-down executor.
+# ---------------------------------------------------------------------------
+@pytest.mark.skipif(not _vllm_available(),
+                     reason="vllm not installed; install kvcache_vllm[vllm]")
+def test_audit_7_close_shuts_down_async_driver_idempotently():
+    from kvcache_vllm.vllm_bridge import KVCacheVllmConnector
+    from vllm.distributed.kv_transfer.kv_connector.v1.base import (
+        KVConnectorRole)
+
+    extra = {"tenant_id":       "audit7-tenant",
+              "model_id":        "audit7-model",
+              "bytes_per_token": 64,
+              "async_load":      True,  # spin up AsyncLoadDriver
+              "async_load_workers": 2}
+    cfg = types.SimpleNamespace(
+        kv_transfer_config=types.SimpleNamespace(
+            kv_connector_extra_config=extra,
+        ),
+    )
+    conn = KVCacheVllmConnector(cfg, KVConnectorRole.SCHEDULER)
+
+    # Driver exists at construction.
+    assert conn._async_driver is not None, \
+        "async_load=True should construct an AsyncLoadDriver"
+
+    # close() shuts it down + nulls the reference.
+    conn.close()
+    assert conn._async_driver is None, \
+        "close() must null _async_driver so async-path guards become no-ops"
+
+    # Idempotent — second close() is a no-op, not an error.
+    conn.close()
+    assert conn._async_driver is None
+
+    # request_finished still works after close — async path guards
+    # short-circuit; the inner connector release still flows so
+    # vLLM teardown can finish handing back requests.
+    req = types.SimpleNamespace(request_id="audit7-rid",
+                                  prompt_token_ids=list(range(8000, 8016)))
+    result = conn.request_finished(req)
+    assert result == (False, None), \
+        f"request_finished after close should still return (False, None), got {result!r}"
