@@ -104,8 +104,24 @@ class KVCacheVllmConnector(KVConnectorBase_V1):  # type: ignore[misc]
 
     # -- construction ----------------------------------------------------
 
-    def __init__(self, vllm_config, role: "KVConnectorRole"):
-        super().__init__(vllm_config, role)
+    def __init__(self, vllm_config, role: "KVConnectorRole",
+                  kv_cache_config=None):
+        # Phase P-4.3 — vLLM ≥ v0.10 added ``kv_cache_config`` as a
+        # required third positional arg to ``KVConnectorBase_V1.__init__``.
+        # Older versions (v0.8.5, v0.9.x) don't take it. We accept it
+        # as an optional kwarg on the bridge and forward to the base
+        # via runtime signature inspection — same source ships
+        # against every vLLM version in the supported window.
+        import inspect
+        try:
+            base_params = inspect.signature(
+                KVConnectorBase_V1.__init__).parameters
+        except (TypeError, ValueError):
+            base_params = {}
+        if "kv_cache_config" in base_params:
+            super().__init__(vllm_config, role, kv_cache_config)
+        else:
+            super().__init__(vllm_config, role)
         extra = _extract_extra(vllm_config)
         tenant_id = str(extra.get("tenant_id", "default"))
         model_id  = str(extra.get("model_id",  "default"))
