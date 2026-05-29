@@ -58,7 +58,10 @@ LLD reference: §6.1.4.
 from __future__ import annotations
 
 import inspect
+import logging
 from typing import Iterable, Optional, Sequence, Set, Tuple
+
+_log = logging.getLogger(__name__)
 
 # Importing this module hard-requires vLLM. The ``kvcache_vllm.connector``
 # module remains import-clean without vLLM — operators only pull this
@@ -501,6 +504,17 @@ class KVCacheVllmConnector(KVConnectorBase_V1, SupportsHMA):  # type: ignore[mis
         kwargs bag. Real vLLM threads this through the metadata struct
         the engine builds per forward step; tests pass it via kwargs
         directly. We try both — kwargs wins so tests can override.
+
+        Audit-fix #5: a request_id that comes WITHOUT a matching
+        ``token_ids_by_request`` entry is a contract violation — we
+        used to silently include it as ``rid: []``, ``save_kv_layer``
+        accumulated bytes against it, then ``wait_for_save`` dropped
+        them because ``LayerAccumulator.drain_request`` returns
+        ``None`` for unbound rids. Net effect: silent save loss. Now
+        we omit such rids from the returned dict (so no bytes ever
+        accumulate) AND emit a one-line warning so the caller can see
+        the engine bug instead of debugging a missing cache entry
+        downstream.
         """
         rids = kwargs.get("request_ids")
         tokens_by_request = kwargs.get("token_ids_by_request") or {}
@@ -510,8 +524,19 @@ class KVCacheVllmConnector(KVConnectorBase_V1, SupportsHMA):  # type: ignore[mis
                 getattr(attn_metadata, "token_ids_by_request", {}) or {})
         if not rids:
             return {}
-        return {str(rid): list(tokens_by_request.get(rid, []))
-                for rid in rids}
+        out: dict = {}
+        for rid in rids:
+            toks = tokens_by_request.get(rid)
+            if not toks:
+                _log.warning(
+                    "vllm_bridge: save_kv_layer dropped request_id=%r — "
+                    "no matching token_ids_by_request entry (engine "
+                    "passed request_ids without matching tokens; "
+                    "would otherwise silent-loss this request's save)",
+                    rid)
+                continue
+            out[str(rid)] = list(toks)
+        return out
 
     @staticmethod
     def _to_bytes(kv_layer) -> bytes:

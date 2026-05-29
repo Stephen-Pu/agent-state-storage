@@ -746,3 +746,48 @@ def test_audit_4_to_bytes_falls_back_when_tobytes_raises():
 
     with pytest.raises(RuntimeError, match="synthetic error"):
         KVCacheVllmConnector._to_bytes(_BrokenTobytes())
+
+
+# ---------------------------------------------------------------------------
+# Production audit fix #5 — _extract_save_targets omits + warns when a
+# request_id has no matching tokens, instead of silently yielding
+# `rid: []` which save_kv_layer used to accumulate and then drop.
+# ---------------------------------------------------------------------------
+@pytest.mark.skipif(not _vllm_available(),
+                     reason="vllm not installed; install kvcache_vllm[vllm]")
+def test_audit_5_extract_save_targets_omits_unmatched_rid(caplog):
+    from kvcache_vllm.vllm_bridge import KVCacheVllmConnector
+    import logging
+
+    # Three rids, only two with token-id entries → "lonely" should be
+    # omitted from the returned dict AND a WARNING should be logged.
+    attn = types.SimpleNamespace(
+        request_ids=["good_a", "lonely", "good_b"],
+        token_ids_by_request={
+            "good_a": [1, 2, 3],
+            "good_b": [4, 5, 6],
+            # "lonely" deliberately missing
+        },
+    )
+    with caplog.at_level(logging.WARNING, logger="kvcache_vllm.vllm_bridge"):
+        out = KVCacheVllmConnector._extract_save_targets(attn, {})
+
+    assert set(out.keys()) == {"good_a", "good_b"}, \
+        f"unmatched rid should be omitted; got {sorted(out.keys())}"
+    assert out["good_a"] == [1, 2, 3]
+    assert out["good_b"] == [4, 5, 6]
+    # Warning was emitted naming the offending rid.
+    assert any("lonely" in r.getMessage() for r in caplog.records), \
+        "expected a warning naming the dropped request_id"
+
+    # Empty-tokens variant (rid present in the map but list is empty)
+    # is treated identically — also omitted + warned.
+    attn2 = types.SimpleNamespace(
+        request_ids=["good", "empty"],
+        token_ids_by_request={"good": [9], "empty": []},
+    )
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="kvcache_vllm.vllm_bridge"):
+        out2 = KVCacheVllmConnector._extract_save_targets(attn2, {})
+    assert set(out2.keys()) == {"good"}
+    assert any("empty" in r.getMessage() for r in caplog.records)
