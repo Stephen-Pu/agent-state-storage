@@ -236,20 +236,22 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install cffi pytest
-          # Phase P-4.2 — bumped pin from v0.8.5 to v0.9.2. The
-          # earlier worry that v0.9+ added required abstract methods
-          # (request_finished_all_groups, aggregate) turned out to be
-          # a misread: those abstracts live on SupportsHMA and
-          # KVConnectorWorkerMetadata respectively, NOT on
-          # KVConnectorBase_V1 itself. The only real drift on the
-          # base class was request_finished's return type changing
-          # from None to tuple[bool, dict|None] — that's a one-line
-          # fix in vllm_bridge.py (now returns (False, None)).
-          # v0.9.2 stays installable on CPU-only CI runners (we
-          # never load a model). Tracking a newer pin is cheap;
-          # tracking head is the next iteration once v0.9.2 is
-          # proven green here.
-          pip install 'vllm==0.9.2'
+          # Phase P-4.2 — unpinned. The CI lane has now run end-to-end
+          # green against both v0.8.5 and v0.9.2 with identical
+          # results (32 passed / 1 skipped — the skip is
+          # test_bridge_import_fails_cleanly_without_vllm, correctly
+          # skipped when vLLM IS installed). The earlier worry that
+          # newer abstract methods (request_finished_all_groups,
+          # aggregate) on KVConnectorBase_V1 would break us was a
+          # misread — those live on the SupportsHMA +
+          # KVConnectorWorkerMetadata mixins, not the base class we
+          # subclass. The one real drift (request_finished return
+          # type) is now handled by the bridge returning
+          # (False, None) — forward-compatible with current vLLM
+          # and harmless on older versions that ignored the return.
+          # If a future vLLM release breaks compatibility, the
+          # ci-vllm lane will catch it on the next push; pin then.
+          pip install --upgrade vllm
           python -c "import vllm; print('vllm', vllm.__version__)"
 
       - name: Build libkvcache.so
