@@ -295,6 +295,19 @@ void NodeDirectory::OnWatch(const WatchEvent& ev) {
     if (node_id.empty()) return;
 
     std::lock_guard lk(mu_);
+    // Phase K-6 — view-mode wins. When ApplyClusterViewJson flips
+    // view_active_=true it also fires off a detached thread to call
+    // etcd_->Unwatch on the prefix handle (the detach is mandatory
+    // because Unwatch would otherwise self-deadlock on the etcd
+    // dispatcher's mutex). On Linux runners under load that thread
+    // can be scheduled tens-to-hundreds of milliseconds later, and
+    // any /kvcache/nodes/ PUT racing in that window otherwise
+    // mutates the table behind the view's back — corrupting
+    // membership and breaking the K-3 invariant "the CP-published
+    // ClusterView is the SOLE source of truth while it's live."
+    // Drop the event at the entry point; the detached Unwatch will
+    // catch up eventually and the source dries up at that point.
+    if (view_active_) return;
     if (ev.type == WatchEventType::kDelete) {
         table_.erase(node_id);
     } else {
