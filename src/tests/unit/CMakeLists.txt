@@ -165,6 +165,14 @@ kvcache_add_test(test_reserve_backpressure
                   abi/reserve_backpressure_test.cpp)
 target_link_libraries(test_reserve_backpressure PRIVATE kvcache)
 
+# Phase G-6 — alert-fires-when-expected smoke tests. Drives the
+# C ABI to force each G-5 alert's condition, then asserts the
+# underlying gauges/counters crossed the threshold the
+# PrometheusRule expression checks.
+kvcache_add_test(test_g6_alert_thresholds
+                  abi/g6_alert_thresholds_test.cpp)
+target_link_libraries(test_g6_alert_thresholds PRIVATE kvcache)
+
 # Phase M-1: gRPC NodeData service tests. Only built when grpc is
 # present (the service impl + its headers don't exist otherwise).
 if(KVCACHE_HAVE_GRPC)
