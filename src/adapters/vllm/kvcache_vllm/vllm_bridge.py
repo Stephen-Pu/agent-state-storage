@@ -258,12 +258,21 @@ class KVCacheVllmConnector(KVConnectorBase_V1):  # type: ignore[misc]
             loaded = loaded | self._async_driver.finished_ids()
         return loaded, saved
 
-    def request_finished(self, request, *_args, **_kwargs) -> None:
+    def request_finished(self, request, *_args, **_kwargs):
         """vLLM calls this when it's about to discard a request — we
         drop our tracking + release the Core ABI handle. Optional in
         the base class; we provide it so leak-on-cancel doesn't bite.
         Also clears any P-3.1 load-staging state for the request so
         the splitter doesn't leak the staged blob.
+
+        Return value (Phase P-4.2): vLLM v1's contract evolved from
+        ``-> None`` (pre-v0.9) to ``-> tuple[bool, dict[str, Any] | None]``
+        meaning ``(connector_owns_blocks_async, optional_kv_transfer_params)``.
+        We always return ``(False, None)`` — the bridge frees its
+        Core-ABI handle synchronously inside this call, so vLLM is
+        free to release the block group immediately. Returning the
+        tuple is forward-compatible with newer vLLM and harmless on
+        older versions (which ignored the return).
         """
         rid = self._request_id(request)
         self._splitter.finish_request(rid)
@@ -273,6 +282,7 @@ class KVCacheVllmConnector(KVConnectorBase_V1):  # type: ignore[misc]
         if self._async_driver is not None:
             self._async_driver.cancel(rid)
         self._inner.release(rid)
+        return False, None
 
     # -- worker-side callbacks -------------------------------------------
 

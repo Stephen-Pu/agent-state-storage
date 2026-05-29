@@ -236,16 +236,20 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install cffi pytest
-          # Phase P-4.1 — pin to a known-tested vLLM version. v0.8.5
-          # has the KVConnectorBase_V1 connector class with exactly
-          # the 7 abstract methods our bridge implements; later
-          # versions (v0.9+) added `request_finished_all_groups` and
-          # `aggregate` abstracts that the bridge doesn't yet
-          # satisfy — chase those in a separate phase when we want
-          # to track latest. v0.8.5 stays installable on CPU-only
-          # CI runners (we never load a model — only import the
-          # connector base + role enum).
-          pip install 'vllm==0.8.5'
+          # Phase P-4.2 — bumped pin from v0.8.5 to v0.9.2. The
+          # earlier worry that v0.9+ added required abstract methods
+          # (request_finished_all_groups, aggregate) turned out to be
+          # a misread: those abstracts live on SupportsHMA and
+          # KVConnectorWorkerMetadata respectively, NOT on
+          # KVConnectorBase_V1 itself. The only real drift on the
+          # base class was request_finished's return type changing
+          # from None to tuple[bool, dict|None] — that's a one-line
+          # fix in vllm_bridge.py (now returns (False, None)).
+          # v0.9.2 stays installable on CPU-only CI runners (we
+          # never load a model). Tracking a newer pin is cheap;
+          # tracking head is the next iteration once v0.9.2 is
+          # proven green here.
+          pip install 'vllm==0.9.2'
           python -c "import vllm; print('vllm', vllm.__version__)"
 
       - name: Build libkvcache.so
