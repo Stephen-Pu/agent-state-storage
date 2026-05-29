@@ -1,4 +1,4 @@
-"""Phase P-2 — vLLM v1 ``KVConnectorBase`` subclass.
+"""Phase P-2 — vLLM v1 ``KVConnectorBase_V1`` subclass.
 
 This module is the bridge between vLLM's connector lifecycle and the
 in-tree :class:`VllmKVConnector` (Phase P-1). Importing it requires
@@ -24,7 +24,7 @@ vLLM's argument shapes (``Request`` objects, scheduler outputs, etc.)
 into the string ``request_id`` + ``Sequence[int]`` tokens the P-1
 core understands.
 
-What's exposed (mirrors vLLM v1 ``KVConnectorBase``):
+What's exposed (mirrors vLLM v1 ``KVConnectorBase_V1``):
 
   * Scheduler role: ``get_num_new_matched_tokens``,
     ``update_state_after_alloc``, ``build_connector_meta``,
@@ -51,7 +51,7 @@ from typing import Iterable, Optional, Sequence, Set, Tuple
 # module remains import-clean without vLLM — operators only pull this
 # bridge in when they're actually integrating with the engine.
 from vllm.distributed.kv_transfer.kv_connector.v1.base import (  # noqa: F401
-    KVConnectorBase,
+    KVConnectorBase_V1,
     KVConnectorRole,
 )
 
@@ -92,11 +92,11 @@ def _extract_extra(vllm_config) -> dict:
     return extra
 
 
-class KVCacheVllmConnector(KVConnectorBase):  # type: ignore[misc]
-    """vLLM v1 ``KVConnectorBase`` subclass over P-1's
+class KVCacheVllmConnector(KVConnectorBase_V1):  # type: ignore[misc]
+    """vLLM v1 ``KVConnectorBase_V1`` subclass over P-1's
     :class:`VllmKVConnector`.
 
-    All ``KVConnectorBase`` callbacks fan in here; we translate vLLM's
+    All ``KVConnectorBase_V1`` callbacks fan in here; we translate vLLM's
     object-shaped arguments (``Request``, ``SchedulerOutput``, ...) into
     the string-id + token-list form the underlying core uses and forward
     each call.

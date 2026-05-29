@@ -27,7 +27,7 @@ cffi = pytest.importorskip("cffi", reason="cffi is required for the C ABI tests"
 
 def _vllm_available() -> bool:
     """True iff vLLM is installed AND exposes the exact symbols the
-    bridge imports (``KVConnectorBase`` + ``KVConnectorRole`` under
+    bridge imports (``KVConnectorBase_V1`` + ``KVConnectorRole`` under
     the v1 connector base module). Tightened beyond a plain
     ``import vllm`` check because vLLM's connector API has been
     refactored across releases — the module path may exist while
@@ -35,10 +35,10 @@ def _vllm_available() -> bool:
     "vllm-absent" lets the skip-marks below fire gracefully
     instead of erroring at test-body import time. Real API
     re-alignment is tracked as a follow-on chip ("vLLM v1
-    KVConnectorBase import path drift")."""
+    KVConnectorBase_V1 import path drift")."""
     try:
         from vllm.distributed.kv_transfer.kv_connector.v1.base import (
-            KVConnectorBase, KVConnectorRole)  # noqa: F401
+            KVConnectorBase_V1, KVConnectorRole)  # noqa: F401
     except Exception:
         return False
     return True

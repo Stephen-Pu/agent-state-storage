@@ -236,7 +236,16 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install cffi pytest
-          pip install --upgrade vllm
+          # Phase P-4.1 — pin to a known-tested vLLM version. v0.8.5
+          # has the KVConnectorBase_V1 connector class with exactly
+          # the 7 abstract methods our bridge implements; later
+          # versions (v0.9+) added `request_finished_all_groups` and
+          # `aggregate` abstracts that the bridge doesn't yet
+          # satisfy — chase those in a separate phase when we want
+          # to track latest. v0.8.5 stays installable on CPU-only
+          # CI runners (we never load a model — only import the
+          # connector base + role enum).
+          pip install 'vllm==0.8.5'
           python -c "import vllm; print('vllm', vllm.__version__)"
 
       - name: Build libkvcache.so
