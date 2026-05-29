@@ -18,33 +18,46 @@ on the engine side):
 
 vLLM's connector factory loads the class by name from
 ``kv_connector_module_path`` and constructs it as
-``KVCacheVllmConnector(vllm_config, role)``. All the engine-side
-callbacks fan in through the subclass methods below, which translate
-vLLM's argument shapes (``Request`` objects, scheduler outputs, etc.)
-into the string ``request_id`` + ``Sequence[int]`` tokens the P-1
-core understands.
+``KVCacheVllmConnector(vllm_config, role[, kv_cache_config])``. The
+third argument is required from vLLM ≥ v0.10 (Phase P-4.3 shim);
+older versions accept the 2-arg form. Same source either way. All
+engine-side callbacks fan in through the subclass methods below,
+which translate vLLM's argument shapes (``Request`` objects,
+scheduler outputs, etc.) into the string ``request_id`` +
+``Sequence[int]`` tokens the P-1 core understands.
 
-What's exposed (mirrors vLLM v1 ``KVConnectorBase_V1``):
+What's exposed (mirrors vLLM v1 ``KVConnectorBase_V1`` + the
+``SupportsHMA`` mixin when present, via conditional inheritance —
+Phase D-6):
 
-  * Scheduler role: ``get_num_new_matched_tokens``,
+  * Scheduler role: ``get_num_new_matched_tokens`` (sync OR
+    async per the ``async_load`` extra-config knob — Phase P-3.2),
     ``update_state_after_alloc``, ``build_connector_meta``,
-    ``get_finished``, ``request_finished``.
+    ``get_finished`` (unions inner sync + async-driver
+    completions), ``request_finished`` (returns ``(False, None)``
+    per Phase P-4.2),
+    ``request_finished_all_groups`` (SupportsHMA contract —
+    Phase D-6 — delegates to ``request_finished``).
 
-  * Worker role: ``register_kv_caches``, ``start_load_kv``,
-    ``wait_for_layer_load``, ``save_kv_layer``, ``wait_for_save``.
+  * Worker role: ``register_kv_caches``, ``start_load_kv``
+    (drains the async-load driver OR drives a sync inline
+    Fetch — Phase P-3.1), ``wait_for_layer_load`` (slices a
+    staged blob into per-layer destinations via
+    :class:`LayerSplitter`), ``save_kv_layer`` (fans bytes
+    into :class:`LayerAccumulator` keyed by request), and
+    ``wait_for_save`` (commits all buffered saves through
+    the inner connector — Phase P-3).
 
-What's NOT implemented yet (raises ``NotImplementedError`` with a
-clear pointer):
-
-  * True per-layer save / load (the in-tree connector batches all
-    layers into one Reserve→Seal). Phase P-3 splits this.
-  * Async ``get_num_new_matched_tokens`` (the second tuple element
-    returned by vLLM v1). We always return ``is_async=False``.
+Out-of-scope today: real-network priority-class differentiation
+(``bench_priority`` can't drive enough queue depth on loopback to
+let priorities bite; the structural fix is to drive the bridge
+through gRPC NodeDataService, tracked as S-7.1).
 
 LLD reference: §6.1.4.
 """
 from __future__ import annotations
 
+import inspect
 from typing import Iterable, Optional, Sequence, Set, Tuple
 
 # Importing this module hard-requires vLLM. The ``kvcache_vllm.connector``
@@ -72,6 +85,16 @@ try:
 except ImportError:
     SupportsHMA = type("_NoSupportsHMA", (object,), {})
     _HAS_SUPPORTS_HMA = False
+
+# Phase P-4.3 — cache the base-class ctor's parameter set at module
+# load time so __init__ doesn't pay an inspect.signature() call on
+# every connector construction. Computed once; read on every
+# super().__init__ forwarding decision.
+try:
+    _BASE_INIT_PARAMS = set(
+        inspect.signature(KVConnectorBase_V1.__init__).parameters.keys())
+except (TypeError, ValueError):
+    _BASE_INIT_PARAMS = set()
 
 from kvcache_vllm.async_load import AsyncLoadDriver
 from kvcache_vllm.connector import VllmKVConnector
@@ -124,22 +147,13 @@ class KVCacheVllmConnector(KVConnectorBase_V1, SupportsHMA):  # type: ignore[mis
 
     def __init__(self, vllm_config, role: "KVConnectorRole",
                   kv_cache_config=None):
-        # Phase P-4.3 — vLLM ≥ v0.10 added ``kv_cache_config`` as a
-        # required third positional arg to ``KVConnectorBase_V1.__init__``.
-        # Older versions (v0.8.5, v0.9.x) don't take it. We accept it
-        # as an optional kwarg on the bridge and forward to the base
-        # via runtime signature inspection — same source ships
-        # against every vLLM version in the supported window.
-        import inspect
-        try:
-            base_params = inspect.signature(
-                KVConnectorBase_V1.__init__).parameters
-        except (TypeError, ValueError):
-            base_params = {}
-        if "kv_cache_config" in base_params:
-            super().__init__(vllm_config, role, kv_cache_config)
-        else:
-            super().__init__(vllm_config, role)
+        # Build internal state FIRST, before super().__init__. The base
+        # class might (now or in a future vLLM release) invoke our own
+        # methods during its constructor — e.g. via a virtual hook or a
+        # registry callback. Constructing our attributes first means a
+        # reentrant call sees a fully-initialised object rather than an
+        # AttributeError on ``self._inner``. Cheap defence; the
+        # ``super().__init__`` below still happens before we return.
         extra = _extract_extra(vllm_config)
         tenant_id = str(extra.get("tenant_id", "default"))
         model_id  = str(extra.get("model_id",  "default"))
@@ -179,6 +193,19 @@ class KVCacheVllmConnector(KVConnectorBase_V1, SupportsHMA):  # type: ignore[mis
                 self._inner, workers=max(1, workers))
         else:
             self._async_driver = None
+
+        # Phase P-4.3 — vLLM ≥ v0.10 added ``kv_cache_config`` as a
+        # required third positional arg to
+        # ``KVConnectorBase_V1.__init__``. Older versions (v0.8.5,
+        # v0.9.x) don't take it. The cached ``_BASE_INIT_PARAMS`` set
+        # (computed once at module load) tells us which arity to
+        # forward — same source ships against every vLLM in the
+        # supported window without paying ``inspect.signature()`` on
+        # every connector construction.
+        if "kv_cache_config" in _BASE_INIT_PARAMS:
+            super().__init__(vllm_config, role, kv_cache_config)
+        else:
+            super().__init__(vllm_config, role)
 
     # -- helpers ---------------------------------------------------------
 
