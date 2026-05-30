@@ -42,5 +42,25 @@ target_include_directories(bench_art_gc PRIVATE
 )
 target_link_libraries(bench_art_gc PRIVATE kvcache)
 
+# Phase S-7.1 — priority bench, gRPC wire edition. Conditional on
+# the gRPC stack being available (matches the existing
+# test_node_data_service guard). Drives the same priority-classed
+# workload as bench_priority but routes every Lookup+Fetch through
+# a real gRPC NodeData stub instead of the in-process C ABI, so the
+# PriorityScheduler queue actually fills enough for priority
+# differentiation to be measurable.
+if(KVCACHE_HAVE_GRPC)
+    add_executable(bench_priority_grpc bench_priority_grpc.cpp)
+    target_include_directories(bench_priority_grpc PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+    target_link_libraries(bench_priority_grpc PRIVATE
+        kvstore_node_grpc
+        kvcache
+        OpenSSL::Crypto
+    )
+endif()
+
 # Convenience aggregate target.
 add_custom_target(bench DEPENDS bench_lookup bench_fetch bench_fairness bench_priority bench_art_gc)
