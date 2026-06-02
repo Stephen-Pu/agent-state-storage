@@ -22,17 +22,20 @@
 // Multi-engine support is a TODO(A1.6) — today we own one ring pair.
 #include <signal.h>
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include "bloom_view/bloom_view.h"
+#include "router/router.h"
 #include "routing_cache/routing_cache.h"
 #include "shmem_ring/doorbell.h"
 #include "shmem_ring/sq_cq.h"
@@ -144,19 +147,30 @@ int main(int argc, char** argv) {
     sigaction(SIGINT,  &sa, nullptr);
     sigaction(SIGTERM, &sa, nullptr);
 
-    // ---- 4. Event loop — drain SQ, echo to CQ.
-    // Phase-A1.5 placeholder handler: the real handler dispatches
-    // through routing_cache → NodeDirectory + gRPC. The echo path
-    // proves the ring round-trip is wired correctly and lets the
-    // integration smoke test assert end-to-end without a node.
+    // ---- 4. Event loop — drain SQ, route, push CQ.
+    // Phase A1.6 — the RequestRouter replaces the A1.5 echo. It walks
+    // bloom-view → routing-cache → resolver and posts a structured
+    // Response. The resolver here is a stub that always misses (no
+    // NodeDirectory wired yet — A1.7); the routing logic + ring round-
+    // trip are fully live and the integration test drives it end-to-end.
+    router::RequestRouter request_router(
+        rcache, bloom,
+        [](const std::array<uint8_t, 16>&, const std::array<uint8_t, 16>&)
+            -> std::optional<router::ResolveResult> {
+            // A1.7: NodeDirectory + HRW (+ cross-node gRPC hop). For now
+            // a true miss — the engine recomputes the prefix.
+            return std::nullopt;
+        });
+
     std::vector<uint8_t> buf;
     while (g_running.load(std::memory_order_relaxed)) {
         // Wait on the doorbell. Engine writes to SQ then Rings().
         int r = sq_bell->Wait(/*timeout_ms=*/250);
         if (r < 0) continue;  // EINTR / shutdown
-        // Drain everything ready.
+        // Drain everything ready, routing each request.
         while (sq->try_pop(&buf)) {
-            (void)cq->try_push({buf.data(), buf.size()});
+            auto resp_bytes = request_router.HandleRaw({buf.data(), buf.size()});
+            (void)cq->try_push({resp_bytes.data(), resp_bytes.size()});
         }
     }
 

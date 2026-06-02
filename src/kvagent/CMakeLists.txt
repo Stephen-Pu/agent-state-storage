@@ -8,6 +8,7 @@ set(KVAGENT_LIB_SRCS
     src/shmem_ring/doorbell.cpp
     src/routing_cache/routing_cache.cpp
     src/bloom_view/bloom_view.cpp
+    src/router/router.cpp
     # BloomView wraps kvcache::node::routing::AggregatedBloom — pull in
     # the one TU so the agent lib is self-contained at link time. Once
     # kvstore-node grows a 'kvcache_routing' static lib we can drop
