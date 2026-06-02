@@ -12,10 +12,13 @@ from kvcache_core import (
     ReserveResult,
 )
 
-from .backend import AIBrixKVConnector
+from .async_load import AsyncLoadDriver
+from .backend import AIBrixKVConnector, AsyncAIBrixKVConnector
 
 __all__ = [
     "AIBrixKVConnector",
+    "AsyncAIBrixKVConnector",
+    "AsyncLoadDriver",
     "KVCacheConnector",
     "KVCacheError",
     "LookupResult",

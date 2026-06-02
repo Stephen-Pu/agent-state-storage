@@ -14,9 +14,11 @@ LLD reference: §6.1.4 (engine adapter strategy).
 
 from __future__ import annotations
 
-from typing import Optional, Sequence
+from typing import Optional, Sequence, Set
 
 from kvcache_core import KVCacheConnector
+
+from .async_load import AsyncLoadDriver
 
 
 class AIBrixKVConnector:
@@ -111,6 +113,126 @@ class AIBrixKVConnector:
             self._closed = True
 
     def __enter__(self) -> "AIBrixKVConnector":
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
+
+class AsyncAIBrixKVConnector:
+    """AIBrix KVCache-Connector-v1 surface with an async prefetch path.
+
+    Same sync verbs as :class:`AIBrixKVConnector` (``exists`` / ``get``
+    / ``put`` / ``delete``) plus four async verbs the AIBrix runtime
+    can drive to overlap KV-restore with model setup:
+
+      * ``prefetch(rid, key) -> matched_tokens`` — sync lookup +
+        async fetch; 0 means miss (no work scheduled).
+      * ``finished_ids(candidates) -> set`` — poll which rids are
+        ready.
+      * ``pop(rid) -> bytes`` — block-and-collect; releases the
+        inner handle.
+      * ``cancel(rid)`` — drop in-flight state; blocks on a running
+        future first so the worker is not still touching the inner
+        connector when we release.
+
+    Typical AIBrix runtime use::
+
+        with AsyncAIBrixKVConnector(tenant_id="t1", model_id="m",
+                                      bytes_per_token=64) as kv:
+            matched = kv.prefetch("req-7", key)
+            if matched == 0:
+                # ... recompute
+                ...
+            else:
+                # ... model setup runs in parallel with the fetch
+                ...
+                value = kv.pop("req-7")  # blocks if not done
+            kv.put(key, finished_value)
+    """
+
+    CHUNK_TOKENS = 16  # LLD §3.2
+
+    def __init__(self, tenant_id: str, model_id: str,
+                 bytes_per_token: int, *, workers: int = 4) -> None:
+        if bytes_per_token <= 0:
+            raise ValueError("bytes_per_token must be positive")
+        self._cx = KVCacheConnector(tenant_id=tenant_id, model_id=model_id)
+        self._bytes_per_token = bytes_per_token
+        self._driver = AsyncLoadDriver(
+            self._cx, bytes_per_token=bytes_per_token, workers=workers)
+        self._closed = False
+
+    # ----- sync Connector v1 verbs ----------------------------------------
+
+    def exists(self, key: Sequence[int]) -> bool:
+        hit = self._cx.lookup(key)
+        if hit is None:
+            return False
+        try:
+            self._cx.release(hit.handle)
+        except Exception:
+            pass
+        return True
+
+    def get(self, key: Sequence[int]) -> Optional[bytes]:
+        hit = self._cx.lookup(key)
+        if hit is None:
+            return None
+        n_bytes = int(hit.matched_tokens) * self._bytes_per_token
+        buf = bytearray(n_bytes)
+        cid = self._cx.fetch(hit.handle, buf)
+        self._cx.wait(cid)
+        self._cx.release(hit.handle)
+        return bytes(buf)
+
+    def put(self, key: Sequence[int], value: bytes) -> None:
+        if not key:
+            raise ValueError("key must be non-empty")
+        if not value:
+            raise ValueError("value must be non-empty")
+        locator = self._cx.make_locator(key)
+        rsv = self._cx.reserve(locator, len(value))
+        if rsv.slot_bytes < len(value):
+            raise RuntimeError(
+                f"reserved slot too small: {rsv.slot_bytes} < {len(value)}")
+        self._cx.write_into_slot(rsv.slot_addr, value)
+        self._cx.publish(rsv.handle, watermark=len(value))
+        self._cx.seal(rsv.handle, key)
+
+    def delete(self, key: Sequence[int]) -> bool:
+        del key
+        return False
+
+    # ----- async prefetch path --------------------------------------------
+
+    def prefetch(self, request_id: str, key: Sequence[int]) -> int:
+        """Sync lookup + async fetch. Returns matched_tokens; 0 = miss
+        (no work scheduled, caller falls through to ``get`` or
+        recompute)."""
+        return self._driver.prefetch(request_id, key)
+
+    def finished_ids(self, candidates=None) -> Set[str]:
+        return self._driver.finished_ids(candidates)
+
+    def pop(self, request_id: str) -> Optional[bytes]:
+        return self._driver.pop(request_id)
+
+    def cancel(self, request_id: str) -> None:
+        self._driver.cancel(request_id)
+
+    def in_flight(self) -> int:
+        return self._driver.in_flight()
+
+    # ----- lifecycle -------------------------------------------------------
+
+    def close(self) -> None:
+        if not self._closed:
+            self._driver.close(wait=True)
+            self._cx.close()
+            self._closed = True
+
+    def __enter__(self) -> "AsyncAIBrixKVConnector":
         return self
 
     def __exit__(self, *_: object) -> None:
