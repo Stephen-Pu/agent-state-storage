@@ -46,10 +46,12 @@ set(NODE_CORE_SRCS
     # routing
     src/routing/hrw.cpp
     src/routing/bloom_sketch.cpp
-    # obs
-    src/obs/metrics.cpp
-    # logs.cpp moved to core/common/log_sink.cpp in Phase O-2 — pulled in
-    # transitively through kvcache_common.
+    # obs — entire subdirectory removed in Phase O-3:
+    #   - obs/logs.{h,cpp}    -> core/common/log_sink.{h,cpp} (Phase O-2)
+    #   - obs/metrics.{h,cpp} -> deleted as dead code (Phase O-3);
+    #     real metrics live in core/common/metrics.{h,cpp} under the
+    #     kvcache::metrics namespace, pulled in transitively via
+    #     kvcache_common.
     # runtime (Phase L-1)
     src/runtime/node_runtime.cpp
 )
