@@ -50,6 +50,7 @@ set(NODE_CLUSTER_SRCS
     ${KVCACHE_NODE_SRC}/cluster/node_registrar.cpp
     ${KVCACHE_NODE_SRC}/cluster/node_directory.cpp
     ${KVCACHE_NODE_SRC}/cluster/bloom_publisher.cpp
+    ${KVCACHE_NODE_SRC}/cluster/drain_gate.cpp
 )
 
 set(NODE_ROUTING_SRCS
@@ -146,6 +147,10 @@ kvcache_add_test(test_bloom_publisher   cluster/bloom_publisher_test.cpp
                   ${NODE_CLUSTER_SRCS} ${NODE_ROUTING_SRCS})
 target_link_libraries(test_bloom_publisher PRIVATE CURL::libcurl nlohmann_json::nlohmann_json)
 kvcache_add_test(test_bloom_sketch      routing/bloom_sketch_test.cpp        ${NODE_ROUTING_SRCS})
+
+# Phase A2.2: DrainGate + DrainWatcher over InMemoryEtcdClient.
+kvcache_add_test(test_drain_gate        cluster/drain_gate_test.cpp          ${NODE_CLUSTER_SRCS} ${NODE_ROUTING_SRCS})
+target_link_libraries(test_drain_gate PRIVATE CURL::libcurl nlohmann_json::nlohmann_json)
 
 kvcache_add_test(test_quota             qos/quota_test.cpp                   ${NODE_QOS_SRCS})
 kvcache_add_test(test_tenant            qos/tenant_test.cpp                  ${NODE_QOS_SRCS})

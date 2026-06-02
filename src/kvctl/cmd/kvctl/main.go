@@ -323,6 +323,48 @@ func newDrainCmd(g *globalFlags) *cobra.Command {
 	return cmd
 }
 
+// ---- undrain --------------------------------------------------------------
+
+func newUndrainCmd(g *globalFlags) *cobra.Command {
+	var clusterID string
+	cmd := &cobra.Command{
+		Use:   "undrain <node_id>",
+		Short: "Clear a node's drain marker (resume routing to it)",
+		Long: "Deletes the drain marker written by `kvctl drain`. The CP " +
+			"stops publishing the node as DRAINING within one view tick; " +
+			"kvagent routers resume sending it new prefixes.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			nodeID := args[0]
+			cli, err := g.etcd()
+			if err != nil {
+				return fmt.Errorf("dial etcd: %w", err)
+			}
+			defer cli.Close()
+			ctx, cancel := context.WithTimeout(cmd.Context(), g.timeout)
+			defer cancel()
+			key := drainKey(clusterID, nodeID)
+			resp, err := cli.Delete(ctx, key)
+			if err != nil {
+				return fmt.Errorf("delete %s: %w", key, err)
+			}
+			if resp.Deleted == 0 {
+				fmt.Fprintf(cmd.OutOrStdout(),
+					"no drain marker at %s (node was not draining)\n", key)
+				return nil
+			}
+			fmt.Fprintf(cmd.OutOrStdout(),
+				"drain marker cleared: %s\n"+
+					"  the CP will stop publishing %s as DRAINING within one tick.\n",
+				key, nodeID)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&clusterID, "cluster", defaultClusterID,
+		"cluster id (matches the CP --cluster flag)")
+	return cmd
+}
+
 // ---- trace (stub) ---------------------------------------------------------
 
 func newTraceCmd(g *globalFlags) *cobra.Command {
@@ -477,6 +519,7 @@ func main() {
 		newTierStatsCmd(g),
 		newQuotaCmd(g),
 		newDrainCmd(g),
+		newUndrainCmd(g),
 		newTraceCmd(g),
 		newVersionCmd(),
 	)
