@@ -114,6 +114,18 @@ include_directories(${CMAKE_SOURCE_DIR}/include)
 # --------------------------------------------------------------------------
 find_package(CURL REQUIRED)
 
+# Phase B8 — OpenSSL for real X.509 / SPIFFE parsing in security/mtls.
+# QUIET + optional: a build without OpenSSL keeps the CN-only string-
+# scan fallback (security/mtls.cpp #else branch). When found we define
+# KVCACHE_HAVE_OPENSSL globally and link OpenSSL::Crypto where needed.
+find_package(OpenSSL QUIET)
+if(OpenSSL_FOUND)
+    add_compile_definitions(KVCACHE_HAVE_OPENSSL=1)
+    message(STATUS "OpenSSL ${OPENSSL_VERSION} found — mtls uses real X.509 parsing")
+else()
+    message(STATUS "OpenSSL not found — mtls falls back to CN-only string scan")
+endif()
+
 find_package(nlohmann_json 3 QUIET CONFIG)
 if(NOT nlohmann_json_FOUND)
     message(STATUS "nlohmann_json not found locally; fetching v3.11.3 via FetchContent")

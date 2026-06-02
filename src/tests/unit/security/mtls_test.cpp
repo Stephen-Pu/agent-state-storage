@@ -19,14 +19,103 @@ TEST(MtlsRegistryTest, UpsertResolveRemove) {
     EXPECT_FALSE(r.Resolve("tenant-A").has_value());
 }
 
-TEST(MtlsRegistryTest, ExtractCnFromPem) {
+TEST(MtlsRegistryTest, ExtractCnFromFakeSubjectString) {
+    // This fake "Subject:" line is NOT a valid PEM cert. The fallback
+    // string-scan parser extracts the CN= token from it; the real
+    // OpenSSL parser correctly rejects it (it's not a cert). Branch
+    // the expectation on which parser is compiled in.
     auto cn = MtlsRegistry::ExtractCnFromPem(
         "Subject: O=Acme, CN=kvagent-node-1, OU=infra\n");
+    if (MtlsRegistry::HasRealParser()) {
+        EXPECT_FALSE(cn.has_value())
+            << "real X.509 parser must reject a non-cert blob";
+    } else {
+        ASSERT_TRUE(cn.has_value());
+        EXPECT_EQ(*cn, "kvagent-node-1");
+    }
+}
+
+TEST(MtlsRegistryTest, ExtractCnReturnsNulloptOnMissing) {
+    // No CN= marker AND not a valid cert — both parsers return nullopt.
+    auto cn = MtlsRegistry::ExtractCnFromPem("Subject: O=Acme\n");
+    EXPECT_FALSE(cn.has_value());
+}
+
+// Phase B8 — a real, self-signed leaf cert (RSA-2048) with:
+//   Subject: O=Acme, CN=kvagent-node-1
+//   subjectAltName: DNS:node-1.kvcache.svc,
+//                   URI:spiffe://kvcache.example/node/node-1
+// Generated once with `openssl req -x509` and pinned here so the test
+// is hermetic (no openssl(1) at test time). Valid until 2036.
+static const char* kTestLeafPem =
+    "-----BEGIN CERTIFICATE-----\n"
+    "MIIDRDCCAiygAwIBAgIUN582WEUR3GJ9qBwodgaX2qRUw0wwDQYJKoZIhvcNAQEL\n"
+    "BQAwKDENMAsGA1UECgwEQWNtZTEXMBUGA1UEAwwOa3ZhZ2VudC1ub2RlLTEwHhcN\n"
+    "MjYwNjAyMTgwMjAwWhcNMzYwNTMwMTgwMjAwWjAoMQ0wCwYDVQQKDARBY21lMRcw\n"
+    "FQYDVQQDDA5rdmFnZW50LW5vZGUtMTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCC\n"
+    "AQoCggEBAK1qaOzITxkzOAaa3JYdaLz3b5ORNSNK8K0nJ3o80rTREuIh1ubwcJdl\n"
+    "tlgGeKPxAXJ+D8ZlL/3hJKhZqh8YGOZT0hyZF7r+KzBf9aYj+PA2GOX6LaG/N7rn\n"
+    "ufhF+gIe5wWvenoHtNWzB+KN6XCe1sfWrmuKqvzif5HrtuYIdrwDH1XOgTxR/5N4\n"
+    "ZJ1V6GpNJFt0DrRHOYfRFkNHVzcpzEj76TuknK/1hVMpMthKJnqADMYpcCBwuPip\n"
+    "g+GLWaxG4jN59BwD9cmu14ztRUWHMtpq+RG29/9L55jLSUAtMdJQPKDYFGUOxCOB\n"
+    "+86fbiT/lR9M3GdmCR9fexa77SLrvAECAwEAAaNmMGQwQwYDVR0RBDwwOoISbm9k\n"
+    "ZS0xLmt2Y2FjaGUuc3ZjhiRzcGlmZmU6Ly9rdmNhY2hlLmV4YW1wbGUvbm9kZS9u\n"
+    "b2RlLTEwHQYDVR0OBBYEFO2WcdUn40+xC5XKGibxrhoWW38RMA0GCSqGSIb3DQEB\n"
+    "CwUAA4IBAQBZJ3FOq29En2l7Z+iKeO2W2AbQm0RHPSqEN78u6BsD1uhR8Q9P97EX\n"
+    "eqydYnoLzXJ3djYgpA57KtdJJR6DvHF3j3tg1NiUMMoLQu7Fu+S1CllsCI1kCiFP\n"
+    "XdfM2ue2T463SqfZ+Z1nvbB5dxb17lCfIDc89DG9B6yv9EmjrDDGCeoR/56/6KXr\n"
+    "0+Vf++5c/uIKwt/zE8zSPHyZBP4wjvE6IIEEAHlD3gJPKgur9ChS0Whh1F/0PrUX\n"
+    "SHB1OyL7PHwhd+g6ynXxeTsefo5O/TCNti88RSDuAiHu4geV1Wnl4A0D8EmpLNDe\n"
+    "4remVuPFy4rhUAJG4ouBj/RwcZjoPUbF\n"
+    "-----END CERTIFICATE-----\n";
+
+TEST(MtlsRegistryTest, ParsePemExtractsCnFromRealCert) {
+    if (!MtlsRegistry::HasRealParser()) {
+        GTEST_SKIP() << "built without OpenSSL — real X.509 parse unavailable";
+    }
+    auto info = MtlsRegistry::ParsePem(kTestLeafPem);
+    ASSERT_TRUE(info.has_value());
+    EXPECT_EQ(info->cn, "kvagent-node-1");
+}
+
+TEST(MtlsRegistryTest, ParsePemExtractsDnsAndUriSans) {
+    if (!MtlsRegistry::HasRealParser()) {
+        GTEST_SKIP() << "built without OpenSSL";
+    }
+    auto info = MtlsRegistry::ParsePem(kTestLeafPem);
+    ASSERT_TRUE(info.has_value());
+    ASSERT_EQ(info->dns_sans.size(), 1u);
+    EXPECT_EQ(info->dns_sans[0], "node-1.kvcache.svc");
+    ASSERT_EQ(info->uri_sans.size(), 1u);
+    EXPECT_EQ(info->uri_sans[0], "spiffe://kvcache.example/node/node-1");
+}
+
+TEST(MtlsRegistryTest, ParsePemExtractsSpiffeId) {
+    if (!MtlsRegistry::HasRealParser()) {
+        GTEST_SKIP() << "built without OpenSSL";
+    }
+    auto info = MtlsRegistry::ParsePem(kTestLeafPem);
+    ASSERT_TRUE(info.has_value());
+    ASSERT_TRUE(info->spiffe_id.has_value());
+    EXPECT_EQ(*info->spiffe_id, "spiffe://kvcache.example/node/node-1");
+}
+
+TEST(MtlsRegistryTest, ExtractCnFromRealCertViaWrapper) {
+    if (!MtlsRegistry::HasRealParser()) {
+        GTEST_SKIP() << "built without OpenSSL";
+    }
+    auto cn = MtlsRegistry::ExtractCnFromPem(kTestLeafPem);
     ASSERT_TRUE(cn.has_value());
     EXPECT_EQ(*cn, "kvagent-node-1");
 }
 
-TEST(MtlsRegistryTest, ExtractCnReturnsNulloptOnMissing) {
-    auto cn = MtlsRegistry::ExtractCnFromPem("Subject: O=Acme\n");
-    EXPECT_FALSE(cn.has_value());
+TEST(MtlsRegistryTest, ParsePemRejectsGarbage) {
+    if (!MtlsRegistry::HasRealParser()) {
+        GTEST_SKIP() << "built without OpenSSL";
+    }
+    // A PEM-ish blob that isn't a valid cert — real parse must reject it.
+    auto info = MtlsRegistry::ParsePem(
+        "-----BEGIN CERTIFICATE-----\nnot base64 at all!!!\n"
+        "-----END CERTIFICATE-----\n");
+    EXPECT_FALSE(info.has_value());
 }

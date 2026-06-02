@@ -153,6 +153,15 @@ kvcache_add_test(test_tenant            qos/tenant_test.cpp                  ${N
 kvcache_add_test(test_mtls              security/mtls_test.cpp               ${NODE_SECURITY_SRCS} ${NODE_QOS_SRCS})
 kvcache_add_test(test_rbac              security/rbac_test.cpp               ${NODE_SECURITY_SRCS} ${NODE_QOS_SRCS})
 kvcache_add_test(test_audit             security/audit_test.cpp              ${NODE_SECURITY_SRCS} ${NODE_QOS_SRCS})
+# Phase B8 — security TUs include security/mtls.cpp, which needs
+# OpenSSL::Crypto when KVCACHE_HAVE_OPENSSL is defined. These tests
+# compile the security sources directly (not via kvstore_node_core),
+# so link Crypto explicitly here.
+if(OpenSSL_FOUND)
+    target_link_libraries(test_mtls  PRIVATE OpenSSL::Crypto)
+    target_link_libraries(test_rbac  PRIVATE OpenSSL::Crypto)
+    target_link_libraries(test_audit PRIVATE OpenSSL::Crypto)
+endif()
 
 kvcache_add_test(test_metrics           obs/metrics_test.cpp)
 # LLD §6.2 — logging facade. Foundation only; per-callsite migration

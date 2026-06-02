@@ -81,6 +81,13 @@ if(KVCACHE_ENABLE_URING)
     target_link_libraries(kvstore_node_core      PUBLIC ${LIBURING_LIBRARIES})
 endif()
 
+# Phase B8 — security/mtls.cpp uses OpenSSL X.509 when available
+# (KVCACHE_HAVE_OPENSSL defined at the top level). Link Crypto so the
+# X509_*/PEM_*/GENERAL_NAME_* symbols resolve.
+if(OpenSSL_FOUND)
+    target_link_libraries(kvstore_node_core PUBLIC OpenSSL::Crypto)
+endif()
+
 # Phase F-2: when gRPC + the vendored etcd proto lib are available,
 # enable the real GrpcEtcdClient by defining KVCACHE_HAVE_GRPC and
 # linking the proto + grpc++ targets. Absent any of those, the
