@@ -12,6 +12,7 @@
 #include <memory>
 #include <rocksdb/cache.h>
 #include <rocksdb/db.h>
+#include <rocksdb/filter_policy.h>
 #include <rocksdb/options.h>
 #include <rocksdb/rate_limiter.h>
 #include <rocksdb/slice.h>
@@ -213,22 +214,49 @@ std::unique_ptr<RocksdbStore> RocksdbStore::Open(const Options& opts, std::strin
         db_opts.write_buffer_manager = store->wbm_;
     }
 
-    // Shared block cache → BlockBasedTableOptions applied to every CF.
-    rocksdb::ColumnFamilyOptions cf_tmpl;
+    // Phase B10.1 — per-CF tuning. All CFs share one block cache (so the
+    // 64 MiB budget is global, not 4×). A `with_bloom` flag adds a bloom
+    // filter for point-lookup-heavy CFs (sealed_chunks). The shared cache
+    // is created once here and captured by each CF's table factory.
     if (opts.block_cache_bytes > 0) {
         store->block_cache_ = rocksdb::NewLRUCache(
             static_cast<size_t>(opts.block_cache_bytes));
-        rocksdb::BlockBasedTableOptions table_opts;
-        table_opts.block_cache = store->block_cache_;
-        cf_tmpl.table_factory.reset(
-            rocksdb::NewBlockBasedTableFactory(table_opts));
     }
+    auto make_cf = [&](bool with_bloom, uint64_t write_buffer_bytes) {
+        rocksdb::ColumnFamilyOptions cf;
+        rocksdb::BlockBasedTableOptions table_opts;
+        if (store->block_cache_) {
+            table_opts.block_cache = store->block_cache_;
+        }
+        if (with_bloom && opts.bloom_bits_per_key > 0) {
+            // shared_ptr filter policy — owned by the table options; the
+            // table factory copies it. No lifetime worry on our side.
+            table_opts.filter_policy.reset(
+                rocksdb::NewBloomFilterPolicy(opts.bloom_bits_per_key,
+                                              /*use_block_based_builder=*/false));
+            // whole_key_filtering: GetSealedChunk looks up the full 40-byte
+            // key (not a prefix), so filter on whole keys.
+            table_opts.whole_key_filtering = true;
+        }
+        cf.table_factory.reset(rocksdb::NewBlockBasedTableFactory(table_opts));
+        if (write_buffer_bytes > 0) {
+            cf.write_buffer_size = static_cast<size_t>(write_buffer_bytes);
+        }
+        return cf;
+    };
+
+    // default / quota / audit: shared cache, no bloom, default memtable
+    // (low-volume CFs). sealed_chunks: bloom filter (hot point-lookup
+    // path) + a bigger memtable (hot write path).
+    const rocksdb::ColumnFamilyOptions cf_plain   = make_cf(false, 0);
+    const rocksdb::ColumnFamilyOptions cf_sealed  =
+        make_cf(/*with_bloom=*/true, opts.sealed_write_buffer_bytes);
 
     std::vector<ColumnFamilyDescriptor> cfs = {
-        {std::string(kCfDefault),             cf_tmpl},
-        {std::string(kCfSealedChunks),        cf_tmpl},
-        {std::string(kCfTenantQuotaState),    cf_tmpl},
-        {std::string(kCfAuditBufferOverflow), cf_tmpl},
+        {std::string(kCfDefault),             cf_plain},
+        {std::string(kCfSealedChunks),        cf_sealed},
+        {std::string(kCfTenantQuotaState),    cf_plain},
+        {std::string(kCfAuditBufferOverflow), cf_plain},
     };
     std::vector<ColumnFamilyHandle*> handles;
     // rocksdb 11.x: DB::Open takes std::unique_ptr<DB>*. Open into a

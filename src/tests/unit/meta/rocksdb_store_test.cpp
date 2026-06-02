@@ -137,6 +137,62 @@ TEST(RocksdbStoreTest, ProductionTuningOpensAndStatsDump) {
         << "stats dump didn't look like rocksdb output";
 }
 
+// Phase B10.1 — per-CF tuning: the sealed_chunks CF gets a bloom filter
+// + bigger memtable; opening with those knobs must still round-trip, and
+// a point-lookup of an absent key (the case the bloom filter optimises)
+// must correctly miss. We can't assert the filter was *consulted* from
+// the public API, but a regression that mis-wired the table factory
+// would surface as an Open failure or a wrong Get result.
+TEST(RocksdbStoreTest, PerCfTuningWithBloomRoundTrips) {
+    auto path = std::filesystem::temp_directory_path() / "kvcache_rocks_bloom";
+    std::filesystem::remove_all(path);
+
+    RocksdbStore::Options opts;
+    opts.path                      = path.string();
+    opts.block_cache_bytes         = 8ull << 20;
+    opts.sealed_write_buffer_bytes = 16ull << 20;
+    opts.bloom_bits_per_key        = 10;
+
+    std::string err;
+    auto store = RocksdbStore::Open(opts, &err);
+    ASSERT_NE(store, nullptr) << err;
+
+    kv_locator_t loc{};
+    loc.model_id_hash = 7;
+    SealedChunkValue v{};
+    v.version = kSchemaVersion;
+    v.bytes_total = 4096;
+    ASSERT_TRUE(store->PutSealedChunkAtomic(SealedChunkKey::From(loc), v, 1, &err)) << err;
+
+    // Present key → hit.
+    auto got = store->GetSealedChunk(SealedChunkKey::From(loc), &err);
+    ASSERT_TRUE(got.has_value()) << err;
+    EXPECT_EQ(got->bytes_total, 4096u);
+
+    // Absent key → the bloom filter's optimised path → clean miss.
+    kv_locator_t absent{};
+    absent.model_id_hash = 9999;
+    EXPECT_FALSE(store->GetSealedChunk(SealedChunkKey::From(absent), &err).has_value());
+}
+
+TEST(RocksdbStoreTest, BloomDisabledStillRoundTrips) {
+    auto path = std::filesystem::temp_directory_path() / "kvcache_rocks_nobloom";
+    std::filesystem::remove_all(path);
+    RocksdbStore::Options opts;
+    opts.path               = path.string();
+    opts.bloom_bits_per_key = 0;  // filter off
+    std::string err;
+    auto store = RocksdbStore::Open(opts, &err);
+    ASSERT_NE(store, nullptr) << err;
+    kv_locator_t loc{};
+    loc.model_id_hash = 1;
+    SealedChunkValue v{};
+    v.version = kSchemaVersion;
+    v.bytes_total = 256;
+    ASSERT_TRUE(store->PutSealedChunkAtomic(SealedChunkKey::From(loc), v, 1, &err)) << err;
+    EXPECT_TRUE(store->GetSealedChunk(SealedChunkKey::From(loc), &err).has_value());
+}
+
 TEST(RocksdbStoreTest, StatsStringEmptyWhenDisabled) {
     auto path = std::filesystem::temp_directory_path() / "kvcache_rocks_nostats";
     std::filesystem::remove_all(path);

@@ -127,6 +127,20 @@ class RocksdbStore {
         //   enable_statistics: attach a rocksdb Statistics object so
         //     StatsString() returns the counter dump for /metrics + ops.
         bool        enable_statistics = true;
+
+        // Phase B10.1 — per-CF tuning.
+        //   sealed_write_buffer_bytes: the sealed_chunks CF is the hot
+        //     write path (every Seal lands here); give it a bigger
+        //     memtable than the rocksdb default (64 MiB) so write bursts
+        //     don't trigger frequent flushes. The audit / quota / default
+        //     CFs keep the default — they're low-volume. 0 = rocksdb
+        //     default for all CFs.
+        uint64_t    sealed_write_buffer_bytes = 128ull << 20;  // 128 MiB
+        //   bloom_bits_per_key: bloom filter on the sealed_chunks CF so a
+        //     GetSealedChunk point-lookup of an absent 40-byte key skips
+        //     the SST data blocks. 10 bits/key ≈ 1% false-positive. 0
+        //     disables the filter (e.g. for a scan-only workload).
+        int         bloom_bits_per_key = 10;
     };
 
     static std::unique_ptr<RocksdbStore> Open(const Options& opts, std::string* err);
