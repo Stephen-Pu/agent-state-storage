@@ -9,11 +9,14 @@ set(KVAGENT_LIB_SRCS
     src/routing_cache/routing_cache.cpp
     src/bloom_view/bloom_view.cpp
     src/router/router.cpp
-    # BloomView wraps kvcache::node::routing::AggregatedBloom — pull in
-    # the one TU so the agent lib is self-contained at link time. Once
-    # kvstore-node grows a 'kvcache_routing' static lib we can drop
-    # this direct path inclusion.
+    src/router/hrw_resolver.cpp
+    # BloomView wraps kvcache::node::routing::AggregatedBloom and the
+    # HrwResolver (Phase A1.7) wraps kvcache::node::routing::HrwRing —
+    # pull in those TUs so the agent lib is self-contained at link time.
+    # Once kvstore-node grows a 'kvcache_routing' static lib we can drop
+    # these direct path inclusions.
     ${CMAKE_SOURCE_DIR}/kvstore-node/src/routing/bloom_sketch.cpp
+    ${CMAKE_SOURCE_DIR}/kvstore-node/src/routing/hrw.cpp
 )
 
 add_library(kvagent_lib STATIC ${KVAGENT_LIB_SRCS})

@@ -35,6 +35,7 @@
 #include <vector>
 
 #include "bloom_view/bloom_view.h"
+#include "router/hrw_resolver.h"
 #include "router/router.h"
 #include "routing_cache/routing_cache.h"
 #include "shmem_ring/doorbell.h"
@@ -148,19 +149,30 @@ int main(int argc, char** argv) {
     sigaction(SIGTERM, &sa, nullptr);
 
     // ---- 4. Event loop — drain SQ, route, push CQ.
-    // Phase A1.6 — the RequestRouter replaces the A1.5 echo. It walks
-    // bloom-view → routing-cache → resolver and posts a structured
-    // Response. The resolver here is a stub that always misses (no
-    // NodeDirectory wired yet — A1.7); the routing logic + ring round-
-    // trip are fully live and the integration test drives it end-to-end.
-    router::RequestRouter request_router(
-        rcache, bloom,
-        [](const std::array<uint8_t, 16>&, const std::array<uint8_t, 16>&)
-            -> std::optional<router::ResolveResult> {
-            // A1.7: NodeDirectory + HRW (+ cross-node gRPC hop). For now
-            // a true miss — the engine recomputes the prefix.
-            return std::nullopt;
-        });
+    // Phase A1.7 — the RequestRouter's slow path is now backed by an
+    // HrwResolver: on a routing-cache miss it computes the rendezvous-
+    // hash primary over the cluster node set. The node set is seeded
+    // from the KVCACHE_NODES env (comma-separated node ids) for now;
+    // production refreshes it from etcd's /kvcache/cluster/view on the
+    // same 30s tick as the bloom view. An empty set → resolver misses
+    // and the engine recomputes (no node to pull from yet).
+    router::HrwResolver hrw;
+    if (const char* nodes_env = std::getenv("KVCACHE_NODES")) {
+        std::vector<std::string> ids;
+        std::string s(nodes_env);
+        std::size_t start = 0;
+        while (start <= s.size()) {
+            const auto comma = s.find(',', start);
+            const auto end = (comma == std::string::npos) ? s.size() : comma;
+            if (end > start) ids.emplace_back(s.substr(start, end - start));
+            if (comma == std::string::npos) break;
+            start = comma + 1;
+        }
+        hrw.SetNodes(ids);
+        std::fprintf(stderr, "kvagent: HRW resolver seeded with %zu node(s)\n",
+                     hrw.NodeCount());
+    }
+    router::RequestRouter request_router(rcache, bloom, hrw.AsCallback());
 
     std::vector<uint8_t> buf;
     while (g_running.load(std::memory_order_relaxed)) {

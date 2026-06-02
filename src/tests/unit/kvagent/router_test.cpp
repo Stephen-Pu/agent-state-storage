@@ -198,20 +198,59 @@ TEST(RouterTest, TrueMiss) {
     EXPECT_TRUE(resp.node_id.empty());
 }
 
-TEST(RouterTest, FetchAndPublishAreUnsupported) {
+TEST(RouterTest, FetchResolvesLikeLookup) {
+    // Phase A1.7 — Fetch is a read: it resolves the target node so the
+    // engine can server-pull (NIXL) from it. Same walk as Lookup.
     routing_cache::RoutingCache cache;
     auto bloom = MakePermissiveBloom();
     router::RequestRouter rt(cache, bloom,
         [](const std::array<uint8_t, 16>&, const std::array<uint8_t, 16>&)
-            -> std::optional<ResolveResult> { return std::nullopt; });
-    for (auto op : {OpCode::kFetch, OpCode::kPublish}) {
-        Request req;
-        req.op = op;
-        req.request_id = 7;
-        auto resp = rt.Handle(req);
-        EXPECT_EQ(resp.status, Status::kUnsupported);
-        EXPECT_EQ(resp.request_id, 7u);
-    }
+            -> std::optional<ResolveResult> {
+            return ResolveResult{"node-fetch-target", 0};
+        });
+    Request req;
+    req.op = OpCode::kFetch;
+    req.request_id = 7;
+    req.tenant_id = Tenant(2);
+    req.prefix_hash = Prefix(3);
+    auto resp = rt.Handle(req);
+    EXPECT_EQ(resp.status, Status::kOk);
+    EXPECT_EQ(resp.node_id, "node-fetch-target");
+    EXPECT_EQ(resp.request_id, 7u);
+}
+
+TEST(RouterTest, PublishResolvesWithoutBloomGate) {
+    // Phase A1.7 — Publish is a write: the chunk may not exist yet, so
+    // the bloom gate is skipped. Even with a bloom that would prove the
+    // prefix absent, Publish must still resolve a target node to seal to.
+    routing_cache::RoutingCache cache;
+    auto bloom = bloom_view::BloomView({
+        .loader = [](const std::vector<std::string>& tenants) {
+            std::vector<bloom_view::TenantSketch> out;
+            for (const auto& t : tenants) {
+                auto p = kvcache::node::routing::BloomParams::ForCapacity(1024, 0.001);
+                kvcache::node::routing::LocalBloom b(p);  // empty — proves-absent
+                out.push_back({t, p, b.Snapshot()});
+            }
+            return out;
+        },
+    });
+    std::string tenant(reinterpret_cast<const char*>(Tenant(4).data()), 16);
+    bloom.RegisterTenant(tenant);
+    ASSERT_EQ(bloom.RefreshOnce(), 1);
+
+    router::RequestRouter rt(cache, bloom,
+        [](const std::array<uint8_t, 16>&, const std::array<uint8_t, 16>&)
+            -> std::optional<ResolveResult> {
+            return ResolveResult{"node-seal-target", 0};
+        });
+    Request req;
+    req.op = OpCode::kPublish;
+    req.tenant_id = Tenant(4);
+    req.prefix_hash = Prefix(99);  // would be bloom-negative for a read
+    auto resp = rt.Handle(req);
+    EXPECT_EQ(resp.status, Status::kOk) << "Publish must skip the bloom gate";
+    EXPECT_EQ(resp.node_id, "node-seal-target");
 }
 
 TEST(RouterTest, HandleRawGarbageReturnsError) {

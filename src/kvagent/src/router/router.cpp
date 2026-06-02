@@ -103,12 +103,31 @@ Response RequestRouter::Handle(const Request& req) {
     Response resp;
     resp.request_id = req.request_id;
 
-    if (req.op != OpCode::kLookup) {
-        // Fetch / Publish need the NIXL data path (A1.7).
-        resp.status = Status::kUnsupported;
-        resp.source = Source::kNone;
-        return resp;
+    switch (req.op) {
+        case OpCode::kLookup:
+        case OpCode::kFetch:
+            // Reads. The agent resolves WHERE the prefix lives and
+            // returns the node; the engine then server-pulls (NIXL)
+            // from it (Fetch) or just records the hit (Lookup). A
+            // bloom-negative is a true miss for both — nothing to pull.
+            return ResolveRead(req);
+        case OpCode::kPublish:
+            // Write. The prefix may not exist yet, so the bloom gate
+            // doesn't apply — resolve WHERE the new chunk should be
+            // sealed and return that node; the engine issues the seal
+            // RPC there.
+            return ResolveWrite(req);
+        default:
+            // Corrupt / unknown opcode.
+            resp.status = Status::kError;
+            resp.source = Source::kNone;
+            return resp;
     }
+}
+
+Response RequestRouter::ResolveRead(const Request& req) {
+    Response resp;
+    resp.request_id = req.request_id;
 
     // 1. Bloom fast-negative. tenant_id as the bloom tenant key; the
     //    prefix_hash bytes as the membership key.
@@ -130,12 +149,11 @@ Response RequestRouter::Handle(const Request& req) {
         resp.node_id = *node;
         // matched_tokens isn't cached — a cached hit means "this prefix
         // is primary on node X"; the engine re-confirms the length via
-        // the subsequent Fetch. Leave 0 (the engine treats 0 here as
-        // "ask the node").
+        // the subsequent server-pull. 0 = "ask the node".
         return resp;
     }
 
-    // 3. Slow path.
+    // 3. Slow path (HRW over the cluster node set).
     if (auto rr = resolver_(req.tenant_id, req.prefix_hash)) {
         cache_.Put(key, rr->node_id);
         resp.status = Status::kOk;
@@ -145,6 +163,34 @@ Response RequestRouter::Handle(const Request& req) {
         return resp;
     }
 
+    resp.status = Status::kMiss;
+    resp.source = Source::kNone;
+    return resp;
+}
+
+Response RequestRouter::ResolveWrite(const Request& req) {
+    Response resp;
+    resp.request_id = req.request_id;
+
+    const auto key = MakeKey(req.tenant_id, req.prefix_hash);
+
+    // A Publish doesn't consult the bloom (the chunk is new) but it can
+    // still reuse a cached primary so repeat publishes of the same
+    // prefix land on the same node (locality).
+    if (auto node = cache_.Get(key)) {
+        resp.status = Status::kOk;
+        resp.source = Source::kCache;
+        resp.node_id = *node;
+        return resp;
+    }
+    if (auto rr = resolver_(req.tenant_id, req.prefix_hash)) {
+        cache_.Put(key, rr->node_id);
+        resp.status = Status::kOk;
+        resp.source = Source::kResolver;
+        resp.node_id = rr->node_id;
+        return resp;
+    }
+    // No cluster view yet → nowhere to seal.
     resp.status = Status::kMiss;
     resp.source = Source::kNone;
     return resp;

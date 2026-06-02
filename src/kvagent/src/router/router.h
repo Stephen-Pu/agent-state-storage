@@ -118,6 +118,11 @@ class RequestRouter {
     std::vector<uint8_t> HandleRaw(std::span<const uint8_t> sq_bytes);
 
    private:
+    // Read walk (Lookup/Fetch): bloom-negative → cache → resolver.
+    Response ResolveRead(const Request& req);
+    // Write walk (Publish): cache → resolver (no bloom gate — new data).
+    Response ResolveWrite(const Request& req);
+
     // tenant_id + prefix_hash → RoutingCache::Key (raw bytes as the
     // opaque key fields).
     static routing_cache::Key MakeKey(const std::array<uint8_t, 16>& tenant_id,
