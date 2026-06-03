@@ -3,6 +3,7 @@
 
 #include "tier/rest_cold_tier.h"          // B3  — native-rest backend
 #include "tier/compressing_cold_tier.h"   // B3.1 — compression middleware
+#include "tier/encrypting_cold_tier.h"    // B3.2 — encryption middleware
 #include "tier/block_codec.h"
 
 #include <cerrno>
@@ -186,18 +187,30 @@ std::unique_ptr<IColdTier> CreateBaseColdTier(const ColdTierOptions& opts,
 }  // namespace
 
 std::unique_ptr<IColdTier> CreateColdTier(const ColdTierOptions& opts, std::string* err) {
-    auto base = CreateBaseColdTier(opts, err);
-    if (!base) return nullptr;
+    std::unique_ptr<IColdTier> tier = CreateBaseColdTier(opts, err);
+    if (!tier) return nullptr;
 
-    // B3.1 — optional compression middleware. "none" leaves the base tier
-    // bare (zero overhead); any other codec wraps it.
-    if (opts.compression.codec.empty() ||
-        opts.compression.codec == "none") {
-        return base;
+    // B3.2 — optional encryption, wrapped FIRST (innermost) so that with
+    // compression also on the data path is compress-then-encrypt: the
+    // compressor (outer) shrinks plaintext before the encryptor (inner)
+    // seals it, since ciphertext doesn't compress.
+    if (opts.encryption.enabled) {
+        EncryptingColdTier::Options eo;
+        eo.key = opts.encryption.key;
+        tier = EncryptingColdTier::Create(std::move(tier), eo, err);
+        if (!tier) return nullptr;  // bad key / no OpenSSL — *err set
     }
-    auto codec = MakeCodec(opts.compression.codec, opts.compression.level, err);
-    if (!codec) return nullptr;  // unknown / uncompiled codec — *err set
-    return CompressingColdTier::Create(std::move(base), std::move(codec), err);
+
+    // B3.1 — optional compression middleware (outermost). "none" leaves the
+    // tier as-is (zero overhead); any other codec wraps it.
+    if (!opts.compression.codec.empty() &&
+        opts.compression.codec != "none") {
+        auto codec = MakeCodec(opts.compression.codec, opts.compression.level, err);
+        if (!codec) return nullptr;  // unknown / uncompiled codec — *err set
+        tier = CompressingColdTier::Create(std::move(tier), std::move(codec), err);
+        if (!tier) return nullptr;
+    }
+    return tier;
 }
 
 }  // namespace kvcache::node::tier

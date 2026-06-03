@@ -13,6 +13,7 @@ set(NODE_CORE_SRCS
     src/tier/rest_cold_tier.cpp
     src/tier/block_codec.cpp
     src/tier/compressing_cold_tier.cpp
+    src/tier/encrypting_cold_tier.cpp
     # prefix
     src/prefix/art_index.cpp
     src/prefix/epoch.cpp

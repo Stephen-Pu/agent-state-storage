@@ -104,6 +104,14 @@ struct ColdTierOptions {
         std::string codec = "none";
         int         level = 3;  // zstd level (ignored by identity)
     } compression;
+    // Encryption middleware (Phase B3.2). When enabled the backend is wrapped
+    // in an EncryptingColdTier (AES-256-GCM; requires a KVCACHE_HAVE_OPENSSL
+    // build). `key` must be exactly 32 bytes. Stacked INSIDE compression, so
+    // data is compressed then encrypted.
+    struct Encryption {
+        bool                 enabled = false;
+        std::vector<uint8_t> key;  // 32 bytes when enabled
+    } encryption;
 };
 std::unique_ptr<IColdTier> CreateColdTier(const ColdTierOptions& opts, std::string* err);
 
