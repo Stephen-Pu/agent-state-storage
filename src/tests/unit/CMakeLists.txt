@@ -221,6 +221,8 @@ kvcache_add_test(test_metrics           obs/metrics_test.cpp)
 # LLD §6.2 — logging facade. Foundation only; per-callsite migration
 # of fprintf/cerr → KV_LOG_* is per-file follow-on work.
 kvcache_add_test(test_logs              common/log_sink_test.cpp)
+# Phase W-1 — Locator wire (de)serialization + canonical LE byte layout.
+kvcache_add_test(test_locator           common/locator_test.cpp)
 kvcache_add_test(test_node_runtime      runtime/node_runtime_test.cpp
                  ${KVCACHE_NODE_SRC}/runtime/node_runtime.cpp)
 

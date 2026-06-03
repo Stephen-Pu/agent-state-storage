@@ -36,16 +36,77 @@ bool LocatorIdentityEq(const kv_locator_t& a, const kv_locator_t& b) {
            std::memcmp(a.prefix_hash, b.prefix_hash, sizeof(a.prefix_hash)) == 0;
 }
 
+namespace {
+
+// Explicit little-endian scalar (de)serialization — independent of host
+// byte order, so the 64-byte wire format is identical on x86-64, arm64, and
+// any future big-endian peer. Byte arrays (tenant_id, prefix_hash) are
+// endian-neutral and copied verbatim.
+inline void PutU16LE(uint8_t* p, uint16_t v) {
+    p[0] = static_cast<uint8_t>(v);
+    p[1] = static_cast<uint8_t>(v >> 8);
+}
+inline void PutU32LE(uint8_t* p, uint32_t v) {
+    for (int i = 0; i < 4; ++i) p[i] = static_cast<uint8_t>(v >> (8 * i));
+}
+inline void PutU64LE(uint8_t* p, uint64_t v) {
+    for (int i = 0; i < 8; ++i) p[i] = static_cast<uint8_t>(v >> (8 * i));
+}
+inline uint16_t GetU16LE(const uint8_t* p) {
+    return static_cast<uint16_t>(static_cast<uint16_t>(p[0]) |
+                                 (static_cast<uint16_t>(p[1]) << 8));
+}
+inline uint32_t GetU32LE(const uint8_t* p) {
+    uint32_t v = 0;
+    for (int i = 0; i < 4; ++i) v |= static_cast<uint32_t>(p[i]) << (8 * i);
+    return v;
+}
+inline uint64_t GetU64LE(const uint8_t* p) {
+    uint64_t v = 0;
+    for (int i = 0; i < 8; ++i) v |= static_cast<uint64_t>(p[i]) << (8 * i);
+    return v;
+}
+
+}  // namespace
+
 bool SerializeLocator(const kv_locator_t& loc, std::span<uint8_t, 64> out) {
-    // TODO(stephen): explicit little-endian encoding once we add big-endian CI.
     static_assert(sizeof(kv_locator_t) == 64);
-    std::memcpy(out.data(), &loc, 64);
+    uint8_t* p = out.data();
+    // Field offsets match the kv_locator_t struct layout (LLD §2.1), so on a
+    // little-endian host the encoded bytes are byte-identical to the old raw
+    // memcpy — backward compatible — while a big-endian host now emits the
+    // same canonical layout instead of a byte-swapped one.
+    std::memcpy(p + 0, loc.tenant_id, 16);
+    PutU64LE(p + 16, loc.model_id_hash);
+    std::memcpy(p + 24, loc.prefix_hash, 16);
+    PutU16LE(p + 40, loc.range.layer_start);
+    PutU16LE(p + 42, loc.range.layer_count);
+    PutU16LE(p + 44, loc.range.head_start);
+    PutU16LE(p + 46, loc.range.head_count);
+    PutU32LE(p + 48, loc.range.token_start);
+    PutU32LE(p + 52, loc.range.token_count);
+    PutU32LE(p + 56, loc.version);
+    PutU32LE(p + 60, loc.flags);
     return true;
 }
 
 bool DeserializeLocator(std::span<const uint8_t, 64> in, kv_locator_t* out) {
-    std::memcpy(out, in.data(), 64);
-    return out->version == 1;
+    const uint8_t* p = in.data();
+    kv_locator_t loc{};
+    std::memcpy(loc.tenant_id, p + 0, 16);
+    loc.model_id_hash = GetU64LE(p + 16);
+    std::memcpy(loc.prefix_hash, p + 24, 16);
+    loc.range.layer_start = GetU16LE(p + 40);
+    loc.range.layer_count = GetU16LE(p + 42);
+    loc.range.head_start  = GetU16LE(p + 44);
+    loc.range.head_count  = GetU16LE(p + 46);
+    loc.range.token_start = GetU32LE(p + 48);
+    loc.range.token_count = GetU32LE(p + 52);
+    loc.version = GetU32LE(p + 56);
+    loc.flags   = GetU32LE(p + 60);
+    if (loc.version != 1) return false;
+    *out = loc;
+    return true;
 }
 
 uint64_t ComputeModelIdHash(std::string_view canonical_model_id) {
