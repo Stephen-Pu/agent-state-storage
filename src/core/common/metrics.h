@@ -13,6 +13,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <span>
@@ -115,12 +116,24 @@ class Registry {
 
     void Scrape(std::string& out) const;
 
+    // Phase B10.2 — scrape-time hook. A hook appends extra Prometheus
+    // lines to the scrape body on every Scrape() call — used to surface
+    // metrics that live OUTSIDE the registered Counter/Gauge/Histogram
+    // set (e.g. RocksDB's internal Statistics tickers). Hooks run AFTER
+    // the registered series are rendered and OUTSIDE the registry mutex,
+    // so a hook may safely take its own locks (RocksDB does) and even
+    // touch the Registry without deadlocking. Hooks are append-only
+    // (no removal) — they live for the process; register at startup.
+    using ScrapeHook = std::function<void(std::string& out)>;
+    void RegisterScrapeHook(ScrapeHook hook);
+
    private:
     struct CounterEntry  { std::string help; std::unique_ptr<internal::CounterSeries> s;   Counter   handle; };
     struct GaugeEntry    { std::string help; std::unique_ptr<internal::GaugeSeries> s;     Gauge     handle; };
     struct HistEntry     { std::string help; std::unique_ptr<internal::HistogramSeries> s; Histogram handle; };
 
     mutable std::mutex                                       mu_;
+    std::vector<ScrapeHook>                                  scrape_hooks_;
     std::unordered_map<std::string, CounterEntry>            counters_;
     std::unordered_map<std::string, GaugeEntry>              gauges_;
     std::unordered_map<std::string, HistEntry>               histograms_;

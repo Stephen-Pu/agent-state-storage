@@ -189,8 +189,10 @@ Histogram& Registry::GetOrCreateHistogram(std::string_view name, std::string_vie
 }
 
 void Registry::Scrape(std::string& out) const {
-    std::lock_guard lk(mu_);
     std::ostringstream os;
+    std::vector<ScrapeHook> hooks;
+    {
+    std::lock_guard lk(mu_);
 
     // Counters
     for (const auto& [name, e] : counters_) {
@@ -243,7 +245,21 @@ void Registry::Scrape(std::string& out) const {
             os << name << "_count" << lbls   << " " << b.count << "\n";
         }
     }
+    hooks = scrape_hooks_;  // copy under mu_ so we can run them unlocked
+    }  // release mu_
+
     out = os.str();
+    // Phase B10.2 — run scrape hooks OUTSIDE the registry mutex so a hook
+    // may take its own locks (RocksDB Statistics) or re-enter the Registry
+    // without deadlocking. Each hook appends its own Prometheus lines.
+    for (const auto& h : hooks) {
+        if (h) h(out);
+    }
+}
+
+void Registry::RegisterScrapeHook(ScrapeHook hook) {
+    std::lock_guard lk(mu_);
+    scrape_hooks_.push_back(std::move(hook));
 }
 
 }  // namespace kvcache::metrics

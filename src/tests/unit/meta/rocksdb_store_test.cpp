@@ -193,6 +193,51 @@ TEST(RocksdbStoreTest, BloomDisabledStillRoundTrips) {
     EXPECT_TRUE(store->GetSealedChunk(SealedChunkKey::From(loc), &err).has_value());
 }
 
+// Phase B10.2 — PrometheusMetrics appends kv_rocksdb_* ticker lines that
+// the /metrics scrape hook surfaces. Open with stats on, do some writes,
+// assert the dump carries the curated tickers in Prometheus form.
+TEST(RocksdbStoreTest, PrometheusMetricsEmitsTickers) {
+    auto path = std::filesystem::temp_directory_path() / "kvcache_rocks_prom";
+    std::filesystem::remove_all(path);
+    RocksdbStore::Options opts;
+    opts.path              = path.string();
+    opts.enable_statistics = true;
+    std::string err;
+    auto store = RocksdbStore::Open(opts, &err);
+    ASSERT_NE(store, nullptr) << err;
+
+    for (uint64_t i = 1; i <= 4; ++i) {
+        kv_locator_t loc{};
+        loc.model_id_hash = i;
+        SealedChunkValue v{};
+        v.version = kSchemaVersion;
+        v.bytes_total = i * 128;
+        ASSERT_TRUE(store->PutSealedChunkAtomic(SealedChunkKey::From(loc), v, i, &err)) << err;
+        (void)store->GetSealedChunk(SealedChunkKey::From(loc), &err);
+    }
+
+    std::string body;
+    store->PrometheusMetrics(&body);
+    EXPECT_NE(body.find("kv_rocksdb_block_cache_hit"), std::string::npos);
+    EXPECT_NE(body.find("kv_rocksdb_bytes_written"), std::string::npos);
+    // Lines must be Prometheus "name value" form (space-separated).
+    EXPECT_NE(body.find("kv_rocksdb_block_cache_miss "), std::string::npos);
+}
+
+TEST(RocksdbStoreTest, PrometheusMetricsNoOpWhenStatsDisabled) {
+    auto path = std::filesystem::temp_directory_path() / "kvcache_rocks_prom_off";
+    std::filesystem::remove_all(path);
+    RocksdbStore::Options opts;
+    opts.path              = path.string();
+    opts.enable_statistics = false;
+    std::string err;
+    auto store = RocksdbStore::Open(opts, &err);
+    ASSERT_NE(store, nullptr) << err;
+    std::string body = "preexisting\n";
+    store->PrometheusMetrics(&body);
+    EXPECT_EQ(body, "preexisting\n") << "no stats → append nothing";
+}
+
 TEST(RocksdbStoreTest, StatsStringEmptyWhenDisabled) {
     auto path = std::filesystem::temp_directory_path() / "kvcache_rocks_nostats";
     std::filesystem::remove_all(path);

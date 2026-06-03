@@ -58,3 +58,32 @@ TEST(MetricsTest, GetOrCreateIsIdempotent) {
     auto& b = r.GetOrCreateCounter("dup", "", keys);
     EXPECT_EQ(&a, &b);
 }
+
+// Phase B10.2 — scrape hooks append extra lines to the body, run after
+// the registered series and outside the registry mutex.
+TEST(MetricsTest, ScrapeHookAppendsLines) {
+    Registry r;
+    std::array<std::string_view, 0> keys{};
+    r.GetOrCreateCounter("base_counter", "", keys).Inc(1, {});
+    r.RegisterScrapeHook([](std::string& out) {
+        out += "kv_extra_metric 42\n";
+    });
+    std::string out;
+    r.Scrape(out);
+    EXPECT_NE(out.find("base_counter"), std::string::npos);
+    EXPECT_NE(out.find("kv_extra_metric 42"), std::string::npos);
+}
+
+TEST(MetricsTest, ScrapeHookMayReenterRegistry) {
+    // A hook running outside mu_ may touch the Registry without deadlock.
+    Registry r;
+    r.RegisterScrapeHook([&r](std::string& out) {
+        std::array<std::string_view, 0> keys{};
+        // Re-entrant GetOrCreateGauge would deadlock if hooks ran under mu_.
+        r.GetOrCreateGauge("hook_made_gauge", "", keys).Set(7, {});
+        out += "hook_ran 1\n";
+    });
+    std::string out;
+    r.Scrape(out);
+    EXPECT_NE(out.find("hook_ran 1"), std::string::npos);
+}

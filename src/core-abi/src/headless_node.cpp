@@ -209,6 +209,14 @@ bool HeadlessNode::Init(const Options& opts, std::string* err) {
             // Headless mode tolerates that — clear err and proceed without it.
             err->clear();
             rocks_.reset();
+        } else {
+            // Phase B10.2 — surface rocksdb's internal Statistics tickers on
+            // /metrics. The hook captures the raw pointer (rocks_ outlives
+            // the Registry for the process lifetime; HeadlessNode is a
+            // singleton that isn't torn down before scrapes stop).
+            auto* rocks = rocks_.get();
+            kvcache::metrics::Registry::Default().RegisterScrapeHook(
+                [rocks](std::string& out) { rocks->PrometheusMetrics(&out); });
         }
     }
 

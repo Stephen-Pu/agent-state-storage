@@ -406,6 +406,35 @@ std::string RocksdbStore::StatsString() const {
     return stats_->ToString();
 }
 
+void RocksdbStore::PrometheusMetrics(std::string* out) const {
+    if (!out || !stats_) return;
+    // Curated tickers — the ones an operator actually watches: cache
+    // effectiveness, I/O volume, compaction pressure, write stalls.
+    // (name, ticker) — name becomes kv_rocksdb_<name>.
+    static const std::pair<const char*, rocksdb::Tickers> kTickers[] = {
+        {"block_cache_hit",      rocksdb::BLOCK_CACHE_HIT},
+        {"block_cache_miss",     rocksdb::BLOCK_CACHE_MISS},
+        {"bytes_written",        rocksdb::BYTES_WRITTEN},
+        {"bytes_read",           rocksdb::BYTES_READ},
+        {"compact_read_bytes",   rocksdb::COMPACT_READ_BYTES},
+        {"compact_write_bytes",  rocksdb::COMPACT_WRITE_BYTES},
+        {"memtable_hit",         rocksdb::MEMTABLE_HIT},
+        {"memtable_miss",        rocksdb::MEMTABLE_MISS},
+        {"stall_micros",         rocksdb::STALL_MICROS},
+        {"bloom_filter_useful",  rocksdb::BLOOM_FILTER_USEFUL},
+    };
+    out->append("# HELP kv_rocksdb rocksdb internal Statistics tickers\n");
+    out->append("# TYPE kv_rocksdb untyped\n");
+    for (const auto& [name, ticker] : kTickers) {
+        const uint64_t v = stats_->getTickerCount(ticker);
+        out->append("kv_rocksdb_");
+        out->append(name);
+        out->push_back(' ');
+        out->append(std::to_string(v));
+        out->push_back('\n');
+    }
+}
+
 #else  // !KVCACHE_HAVE_ROCKSDB
 
 // Facade: every accessor errors. Lets the tree compile/link without rocksdb.
@@ -433,6 +462,7 @@ bool RocksdbStore::PutConfig(std::string_view, std::string_view, std::string*) {
 std::optional<std::string> RocksdbStore::GetConfig(std::string_view, std::string*) { return std::nullopt; }
 uint64_t RocksdbStore::CurrentEpoch() const noexcept { return cached_epoch_; }
 std::string RocksdbStore::StatsString() const { return {}; }
+void RocksdbStore::PrometheusMetrics(std::string*) const {}
 
 #endif  // KVCACHE_HAVE_ROCKSDB
 

@@ -150,6 +150,14 @@ class RocksdbStore {
     // scrape this; tests assert it's non-empty after a few writes.
     std::string StatsString() const;
 
+    // Phase B10.2 — append a curated set of rocksdb Statistics tickers as
+    // Prometheus text lines (`kv_rocksdb_<ticker> <value>`) to *out. Wired
+    // into the /metrics scrape via Registry::RegisterScrapeHook so
+    // operators see block-cache hit-rate, bytes read/written, compaction
+    // and stall stats alongside the rest of /metrics. No-op (appends
+    // nothing) when statistics weren't enabled or on the facade build.
+    void PrometheusMetrics(std::string* out) const;
+
     RocksdbStore() = default;
     ~RocksdbStore();
     RocksdbStore(const RocksdbStore&) = delete;
