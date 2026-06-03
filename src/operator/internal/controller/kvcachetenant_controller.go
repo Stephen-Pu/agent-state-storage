@@ -4,16 +4,16 @@
 // KVCacheCluster. The operator's job here is *validation only* — the
 // real "push quota to nodes" path goes
 //
-//   KVCacheTenant CR  →  control-plane (watches the K8s API)
-//                     →  etcd  /quota/<tenant_id>
-//                     →  kvstore-node (etcd watch)
+//	KVCacheTenant CR  →  control-plane (watches the K8s API)
+//	                  →  etcd  /quota/<tenant_id>
+//	                  →  kvstore-node (etcd watch)
 //
 // The CP-side watcher lands in Phase H-4. Today the controller checks:
 //
-//   * the spec is internally consistent (tenant_id is 32 hex chars; the
+//   - the spec is internally consistent (tenant_id is 32 hex chars; the
 //     resource.Quantity strings parse; the default priority is one of the
 //     three allowed values),
-//   * the referenced KVCacheCluster exists in the same namespace.
+//   - the referenced KVCacheCluster exists in the same namespace.
 //
 // It updates Status.Conditions with a single `Validated` condition (True
 // / False with `Reason`). Callers / users can `kubectl get
@@ -106,8 +106,8 @@ func (r *KVCacheTenantReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 					LastTransitionTime: metav1.Now(),
 				}
 				if err := r.Publisher.Publish(ctx, &cluster, &tenant); err != nil {
-					pubCond.Status  = metav1.ConditionFalse
-					pubCond.Reason  = "EtcdPutFailed"
+					pubCond.Status = metav1.ConditionFalse
+					pubCond.Reason = "EtcdPutFailed"
 					pubCond.Message = err.Error()
 					requeue = true
 				} else {
@@ -125,13 +125,13 @@ func (r *KVCacheTenantReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 					LastTransitionTime: metav1.Now(),
 				}
 				if err := r.IdentityPublisher.PublishIdentities(ctx, &cluster, &tenant); err != nil {
-					idCond.Status  = metav1.ConditionFalse
-					idCond.Reason  = "EtcdPutFailed"
+					idCond.Status = metav1.ConditionFalse
+					idCond.Reason = "EtcdPutFailed"
 					idCond.Message = err.Error()
 					requeue = true
 				} else {
-					idCond.Status  = metav1.ConditionTrue
-					idCond.Reason  = "Published"
+					idCond.Status = metav1.ConditionTrue
+					idCond.Reason = "Published"
 					idCond.Message = fmt.Sprintf("%d identities", len(tenant.Spec.AllowedIdentities))
 				}
 				if replaceCondition(&tenant.Status.Conditions, idCond) {

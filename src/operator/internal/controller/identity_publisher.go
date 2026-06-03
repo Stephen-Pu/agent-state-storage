@@ -5,7 +5,7 @@
 // translates a tenant's `spec.allowedIdentities` allow-list into one etcd
 // entry per identity under
 //
-//   /kvcache/identities/<cluster>/<tenantID>/<safe-id>
+//	/kvcache/identities/<cluster>/<tenantID>/<safe-id>
 //
 // The node-side IdentityWatcher does a GetPrefix on "/kvcache/identities/"
 // (it ignores the key suffix and keys the MtlsRegistry off the JSON value's
@@ -41,12 +41,12 @@ import (
 // IdentityPublisher writes a tenant's allowed mTLS identities into the
 // per-cluster etcd that the node-side IdentityWatcher (B8.3) consumes.
 //
-//   * EtcdIdentityPublisher — production; dials the cluster's etcd.
-//   * Tests inject a fake to drive the IdentitiesPublished condition path.
+//   - EtcdIdentityPublisher — production; dials the cluster's etcd.
+//   - Tests inject a fake to drive the IdentitiesPublished condition path.
 type IdentityPublisher interface {
 	PublishIdentities(ctx context.Context,
 		cluster *kvcachev1alpha1.KVCacheCluster,
-		tenant  *kvcachev1alpha1.KVCacheTenant) error
+		tenant *kvcachev1alpha1.KVCacheTenant) error
 }
 
 // IdentityEtcdPayload is the JSON document written per identity. The field
@@ -140,7 +140,7 @@ var _ IdentityPublisher = (*EtcdIdentityPublisher)(nil)
 
 func (p *EtcdIdentityPublisher) PublishIdentities(ctx context.Context,
 	cluster *kvcachev1alpha1.KVCacheCluster,
-	tenant  *kvcachev1alpha1.KVCacheTenant) error {
+	tenant *kvcachev1alpha1.KVCacheTenant) error {
 
 	timeout := p.DialTimeout
 	if timeout <= 0 {

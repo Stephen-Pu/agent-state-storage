@@ -52,15 +52,15 @@ type TenantIdentity struct {
 }
 
 type QuotaSpec struct {
-	CapacityBytes   string `json:"capacityBytes"`            // resource.Quantity, e.g. "100Gi"
-	QPS             uint32 `json:"qps"`
-	BandwidthBytesPerSecond string `json:"bandwidthBytesPerSecond"`  // e.g. "10Gi"
+	CapacityBytes           string `json:"capacityBytes"` // resource.Quantity, e.g. "100Gi"
+	QPS                     uint32 `json:"qps"`
+	BandwidthBytesPerSecond string `json:"bandwidthBytesPerSecond"` // e.g. "10Gi"
 }
 
 type KVCacheTenantStatus struct {
-	Conditions       []metav1.Condition `json:"conditions,omitempty"`
+	Conditions        []metav1.Condition `json:"conditions,omitempty"`
 	CapacityUsedBytes string             `json:"capacityUsedBytes,omitempty"`
-	QPSWindow        uint32             `json:"qpsWindow,omitempty"`
+	QPSWindow         uint32             `json:"qpsWindow,omitempty"`
 }
 
 // +kubebuilder:object:root=true

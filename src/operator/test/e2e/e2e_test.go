@@ -29,7 +29,10 @@
 package e2e
 
 import (
+	"bufio"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -237,16 +240,16 @@ func TestReconcilerFanout(t *testing.T) {
 // `E2E_IMAGE` is set (typically by `make e2e-operator-workload`,
 // which builds + kind-loads the kvstore-node image first). The test:
 //
-//   1. Applies a KVCacheCluster whose `.spec.image` points at the
-//      pre-loaded image, downsizing the rest of the cluster to one
-//      replica each so we don't fight kind's tiny default node for
-//      scheduling slots.
-//   2. Waits for the kvstore-node StatefulSet to report
-//      ReadyReplicas == NodeReplicas. That validates: the image was
-//      built right, the binary starts, the readiness TCP probe on
-//      the grpc port passes — i.e. the L-1 + M-1 work is real, not
-//      just unit-tested.
-//   3. Tears the cluster down.
+//  1. Applies a KVCacheCluster whose `.spec.image` points at the
+//     pre-loaded image, downsizing the rest of the cluster to one
+//     replica each so we don't fight kind's tiny default node for
+//     scheduling slots.
+//  2. Waits for the kvstore-node StatefulSet to report
+//     ReadyReplicas == NodeReplicas. That validates: the image was
+//     built right, the binary starts, the readiness TCP probe on
+//     the grpc port passes — i.e. the L-1 + M-1 work is real, not
+//     just unit-tested.
+//  3. Tears the cluster down.
 //
 // Skipped when E2E_IMAGE is unset so a `make e2e-operator` run still
 // completes in ~45s.
@@ -279,7 +282,7 @@ func TestRealWorkloadPodReady(t *testing.T) {
 	// the kvstore-node binary with CP-shaped flags and CrashLoopBackOff.
 	cpImage := os.Getenv("E2E_CP_IMAGE")
 	if cpImage == "" {
-		cpImage = image  // legacy: same image, crash-loops as a known issue
+		cpImage = image // legacy: same image, crash-loops as a known issue
 	}
 	cluster.Spec.ControlPlane = &kvcachev1alpha1.ControlPlaneSpec{
 		Image:    cpImage,
@@ -589,4 +592,242 @@ func queryEtcdNodes(t *testing.T, ns string) []string {
 	}
 	sort.Strings(ids)
 	return ids
+}
+
+// Phase B8.5 — the producer half of the mTLS identity pipeline (B8.4's
+// EtcdIdentityPublisher) end-to-end against a real apiserver + real etcd.
+//
+// What this proves that the fake-publisher unit tests cannot:
+//   - a real apiserver accepts a KVCacheTenant carrying spec.allowedIdentities
+//     (the handwritten CRD openAPIV3Schema validates, pattern/enum included),
+//   - the REAL clientv3 Put / Get(WithPrefix) / Delete code path inside
+//     PublishIdentities round-trips through etcd's storage layer, and
+//   - the put-all-then-prune contract works: dropping an identity from the
+//     spec deletes its etcd entry (revocation actually revokes).
+//
+// The operator manager runs out-of-cluster (on the host), so it can't dial
+// the in-cluster etcd Service DNS that EtcdEndpointsFor returns. We bridge
+// the gap exactly the way an operator would never need to: a `kubectl
+// port-forward` to the etcd pod, then drive the real publisher against a
+// throwaway ByoEtcd cluster pointed at the forwarded local endpoint.
+func TestIdentityPublishRoundTrip(t *testing.T) {
+	c, teardown := setup(t)
+	defer teardown()
+
+	ns := uniqueNS(t)
+	defer ensureNamespace(t, c, ns)()
+
+	ctx := context.Background()
+
+	// Bring up an operator-managed etcd (one replica is enough). We don't
+	// need the kvstore-node workload here, so this runs without E2E_IMAGE.
+	cluster := sampleCluster(ns)
+	cluster.Spec.NodeReplicas = 1
+	cluster.Spec.Etcd = &kvcachev1alpha1.EtcdSpec{Replicas: 1}
+	if err := c.Create(ctx, cluster); err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+
+	etcdKey := types.NamespacedName{Name: "e2e-etcd", Namespace: ns}
+	if err := pollUntil(t, 4*time.Minute, func() error {
+		var sts appsv1.StatefulSet
+		if err := c.Get(ctx, etcdKey, &sts); err != nil {
+			return err
+		}
+		if sts.Status.ReadyReplicas != 1 {
+			return fmt.Errorf("etcd ReadyReplicas=%d, want 1", sts.Status.ReadyReplicas)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("etcd STS never reached Ready: %v", err)
+	}
+
+	// Create the tenant CR with an identity allow-list. A successful Create
+	// is itself an assertion: the apiserver rejects an unknown/invalid field
+	// against the CRD schema.
+	tenant := &kvcachev1alpha1.KVCacheTenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "e2e-tenant", Namespace: ns},
+		Spec: kvcachev1alpha1.KVCacheTenantSpec{
+			ClusterRef: "e2e",
+			TenantID:   "0123456789abcdef0123456789abcdef",
+			Quota: kvcachev1alpha1.QuotaSpec{
+				CapacityBytes:           "10Gi",
+				QPS:                     100,
+				BandwidthBytesPerSecond: "1Gi",
+			},
+			DefaultPriority: "P1",
+			AllowedIdentities: []kvcachev1alpha1.TenantIdentity{
+				{SpiffeID: "spiffe://e2e.example/tenant/acme", Kind: "tenant"},
+				{CN: "legacy.client"},
+			},
+		},
+	}
+	if err := c.Create(ctx, tenant); err != nil {
+		t.Fatalf("apiserver rejected KVCacheTenant with allowedIdentities "+
+			"(CRD schema bug?): %v", err)
+	}
+
+	// Forward the etcd pod's client port to a local one and point a
+	// throwaway ByoEtcd cluster at it so the real publisher dials a
+	// host-reachable endpoint.
+	localEP, stopPF := portForward(t, ns, "e2e-etcd-0", 2379)
+	defer stopPF()
+
+	pubCluster := cluster.DeepCopy()
+	pubCluster.Spec.ByoEtcd = true
+	pubCluster.Spec.EtcdEndpoints = []string{localEP}
+
+	pub := &controller.EtcdIdentityPublisher{DialTimeout: 5 * time.Second}
+	// Retry: the port-forward may need a moment to accept connections.
+	if err := pollUntil(t, 30*time.Second, func() error {
+		return pub.PublishIdentities(ctx, pubCluster, tenant)
+	}); err != nil {
+		t.Fatalf("PublishIdentities: %v", err)
+	}
+
+	prefix := "/kvcache/identities/e2e/" + tenant.Spec.TenantID + "/"
+	entries := queryEtcdJSON(t, ns, "e2e-etcd-0", prefix)
+	if len(entries) != 2 {
+		t.Fatalf("want 2 identity entries under %s, got %d: %v",
+			prefix, len(entries), entries)
+	}
+	sawSpiffe, sawCN := false, false
+	for _, body := range entries {
+		var p struct {
+			SpiffeID string `json:"spiffe_id"`
+			CN       string `json:"cn"`
+			Tenant   string `json:"tenant"`
+			Kind     string `json:"kind"`
+		}
+		if err := json.Unmarshal([]byte(body), &p); err != nil {
+			t.Fatalf("identity body not JSON: %v\n%s", err, body)
+		}
+		if p.Tenant != tenant.Spec.TenantID {
+			t.Errorf("entry tenant = %q, want %q", p.Tenant, tenant.Spec.TenantID)
+		}
+		if p.SpiffeID == "spiffe://e2e.example/tenant/acme" && p.Kind == "tenant" {
+			sawSpiffe = true
+		}
+		if p.CN == "legacy.client" && p.Kind == "tenant" { // empty kind defaults
+			sawCN = true
+		}
+	}
+	if !sawSpiffe || !sawCN {
+		t.Errorf("expected both spiffe + cn entries; spiffe=%v cn=%v", sawSpiffe, sawCN)
+	}
+	t.Logf("Phase B8.5 verified: 2 identity entries published under %s", prefix)
+
+	// Prune: re-publish with the SPIFFE identity dropped — its etcd entry
+	// must disappear, proving revocation works.
+	tenant.Spec.AllowedIdentities = []kvcachev1alpha1.TenantIdentity{
+		{CN: "legacy.client"},
+	}
+	if err := pub.PublishIdentities(ctx, pubCluster, tenant); err != nil {
+		t.Fatalf("PublishIdentities (prune): %v", err)
+	}
+	after := queryEtcdJSON(t, ns, "e2e-etcd-0", prefix)
+	if len(after) != 1 {
+		t.Fatalf("after prune: want 1 entry, got %d: %v", len(after), after)
+	}
+	for _, body := range after {
+		if strings.Contains(body, "spiffe://") {
+			t.Errorf("pruned spiffe identity still present: %s", body)
+		}
+	}
+	t.Logf("Phase B8.5 prune verified: spiffe entry revoked, 1 entry remains")
+}
+
+// portForward starts a `kubectl port-forward` to pod/<pod>:<remotePort>,
+// letting kubectl pick a free local port. It parses the chosen port from
+// kubectl's "Forwarding from 127.0.0.1:NNNNN -> <remote>" line and returns
+// an "http://127.0.0.1:NNNNN" endpoint plus a stop closure.
+func portForward(t *testing.T, ns, pod string, remotePort int) (string, func()) {
+	t.Helper()
+	kubeconfig := os.Getenv("KUBECONFIG")
+	if kubeconfig == "" {
+		home, _ := os.UserHomeDir()
+		kubeconfig = filepath.Join(home, ".kube", "config")
+	}
+	cmd := exec.Command("kubectl",
+		"--kubeconfig", kubeconfig, "-n", ns,
+		"port-forward", "pod/"+pod, fmt.Sprintf(":%d", remotePort))
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("port-forward stdout pipe: %v", err)
+	}
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start port-forward: %v", err)
+	}
+	stop := func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	}
+
+	addrCh := make(chan string, 1)
+	go func() {
+		sc := bufio.NewScanner(stdout)
+		for sc.Scan() {
+			line := sc.Text()
+			if strings.Contains(line, "Forwarding from") {
+				// "Forwarding from 127.0.0.1:54321 -> 2379"
+				fields := strings.Fields(line)
+				if len(fields) >= 3 {
+					addrCh <- fields[2]
+					return
+				}
+			}
+		}
+		close(addrCh)
+	}()
+
+	select {
+	case addr, ok := <-addrCh:
+		if !ok || addr == "" {
+			stop()
+			t.Fatalf("port-forward exited before reporting a local port")
+		}
+		return "http://" + addr, stop
+	case <-time.After(15 * time.Second):
+		stop()
+		t.Fatalf("port-forward never became ready")
+		return "", nil
+	}
+}
+
+// queryEtcdJSON execs `etcdctl get <prefix> --prefix -w json` inside the
+// etcd pod and returns a decoded {key: value} map. Uses JSON output (not the
+// alternating-line text format) so values are unambiguous.
+func queryEtcdJSON(t *testing.T, ns, pod, prefix string) map[string]string {
+	t.Helper()
+	kubeconfig := os.Getenv("KUBECONFIG")
+	if kubeconfig == "" {
+		home, _ := os.UserHomeDir()
+		kubeconfig = filepath.Join(home, ".kube", "config")
+	}
+	cmd := exec.Command("kubectl",
+		"--kubeconfig", kubeconfig, "-n", ns,
+		"exec", pod, "--",
+		"etcdctl", "--endpoints=http://localhost:2379",
+		"get", prefix, "--prefix", "-w", "json")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("kubectl exec etcdctl get -w json failed: %v", err)
+	}
+	var resp struct {
+		Kvs []struct {
+			Key   string `json:"key"`
+			Value string `json:"value"`
+		} `json:"kvs"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		t.Fatalf("parse etcdctl json: %v\n%s", err, out)
+	}
+	m := make(map[string]string, len(resp.Kvs))
+	for _, kv := range resp.Kvs {
+		k, _ := base64.StdEncoding.DecodeString(kv.Key)
+		v, _ := base64.StdEncoding.DecodeString(kv.Value)
+		m[string(k)] = string(v)
+	}
+	return m
 }
