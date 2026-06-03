@@ -51,6 +51,10 @@ set(NODE_CLUSTER_SRCS
     ${KVCACHE_NODE_SRC}/cluster/node_directory.cpp
     ${KVCACHE_NODE_SRC}/cluster/bloom_publisher.cpp
     ${KVCACHE_NODE_SRC}/cluster/drain_gate.cpp
+    # NOTE: identity_watcher.cpp is intentionally NOT here — it depends on
+    # security::MtlsRegistry, and the shared cluster-test group must not
+    # drag security symbols into every cluster test. test_identity_watcher
+    # compiles it explicitly alongside NODE_SECURITY_SRCS below.
 )
 
 set(NODE_ROUTING_SRCS
@@ -151,6 +155,18 @@ kvcache_add_test(test_bloom_sketch      routing/bloom_sketch_test.cpp        ${N
 # Phase A2.2: DrainGate + DrainWatcher over InMemoryEtcdClient.
 kvcache_add_test(test_drain_gate        cluster/drain_gate_test.cpp          ${NODE_CLUSTER_SRCS} ${NODE_ROUTING_SRCS})
 target_link_libraries(test_drain_gate PRIVATE CURL::libcurl nlohmann_json::nlohmann_json)
+
+# Phase B8.3: IdentityWatcher syncs the MtlsRegistry from etcd.
+# Compiles identity_watcher.cpp explicitly (it's NOT in NODE_CLUSTER_SRCS
+# to keep security symbols out of the other cluster tests) + the security
+# sources it depends on.
+kvcache_add_test(test_identity_watcher  cluster/identity_watcher_test.cpp
+                 ${KVCACHE_NODE_SRC}/cluster/identity_watcher.cpp
+                 ${NODE_CLUSTER_SRCS} ${NODE_ROUTING_SRCS} ${NODE_SECURITY_SRCS} ${NODE_QOS_SRCS})
+target_link_libraries(test_identity_watcher PRIVATE CURL::libcurl nlohmann_json::nlohmann_json)
+if(OpenSSL_FOUND)
+    target_link_libraries(test_identity_watcher PRIVATE OpenSSL::Crypto)
+endif()
 
 kvcache_add_test(test_quota             qos/quota_test.cpp                   ${NODE_QOS_SRCS})
 kvcache_add_test(test_tenant            qos/tenant_test.cpp                  ${NODE_QOS_SRCS})

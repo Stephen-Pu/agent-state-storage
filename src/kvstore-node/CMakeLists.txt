@@ -44,6 +44,7 @@ set(NODE_CORE_SRCS
     src/cluster/node_directory.cpp
     src/cluster/bloom_publisher.cpp
     src/cluster/drain_gate.cpp
+    src/cluster/identity_watcher.cpp
     # routing
     src/routing/hrw.cpp
     src/routing/bloom_sketch.cpp
