@@ -6,7 +6,6 @@ add_library(kvcache_common STATIC
     logging.cpp
     log_sink.cpp         # JSON-line ConsoleLogger backend (Phase O-1, merged O-2)
     metrics.cpp
-    hashing.cpp
     trace.cpp            # OTel-shaped tracing facade (Phase J-1)
 )
 
