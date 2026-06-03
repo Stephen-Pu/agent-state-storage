@@ -28,6 +28,7 @@ set(NODE_TIER_SRCS
     ${KVCACHE_NODE_SRC}/tier/dram_tier.cpp
     ${KVCACHE_NODE_SRC}/tier/nvme_tier.cpp
     ${KVCACHE_NODE_SRC}/tier/cold_tier.cpp
+    ${KVCACHE_NODE_SRC}/tier/rest_cold_tier.cpp  # B3 — native-rest backend (libcurl)
     ${KVCACHE_NODE_SRC}/tier/tier_manager.cpp
 )
 
@@ -106,6 +107,13 @@ kvcache_add_test(test_nvme_tier        tier/nvme_tier_test.cpp          ${NODE_T
 kvcache_add_test(test_cold_tier        tier/cold_tier_test.cpp          ${NODE_TIER_SRCS})
 kvcache_add_test(test_tier_manager     tier/tier_manager_test.cpp       ${NODE_TIER_SRCS})
 
+# B3 — rest_cold_tier.cpp (compiled into NODE_TIER_SRCS via the factory) links
+# libcurl. Every target that pulls NODE_TIER_SRCS must link it.
+kvcache_add_test(test_rest_cold_tier   tier/rest_cold_tier_test.cpp     ${NODE_TIER_SRCS})
+foreach(_tier_t test_pinned_tier test_dram_tier test_nvme_tier test_cold_tier test_tier_manager test_rest_cold_tier)
+    target_link_libraries(${_tier_t} PRIVATE CURL::libcurl)
+endforeach()
+
 # NODE_INGEST_SRCS contains seal.cpp which depends on meta + prefix, so the
 # ingest-side tests all need meta + prefix sources to link cleanly.
 kvcache_add_test(test_mutable_buffer   ingest/mutable_buffer_test.cpp
@@ -120,6 +128,10 @@ kvcache_add_test(test_seal             ingest/seal_test.cpp
 if(KVCACHE_ENABLE_ROCKSDB)
     target_link_libraries(test_seal PRIVATE RocksDB::rocksdb)
 endif()
+# B3 — these pull NODE_TIER_SRCS (rest_cold_tier.cpp) → need libcurl.
+foreach(_ing_t test_mutable_buffer test_watermark test_seal)
+    target_link_libraries(${_ing_t} PRIVATE CURL::libcurl)
+endforeach()
 
 kvcache_add_test(test_nixl_wrapper      transport/nixl_wrapper_test.cpp      ${NODE_TRANSPORT_SRCS})
 kvcache_add_test(test_priority_scheduler transport/priority_scheduler_test.cpp ${NODE_TRANSPORT_SRCS})

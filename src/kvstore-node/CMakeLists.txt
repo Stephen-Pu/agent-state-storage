@@ -10,6 +10,7 @@ set(NODE_CORE_SRCS
     src/tier/dram_tier.cpp
     src/tier/nvme_tier.cpp
     src/tier/cold_tier.cpp
+    src/tier/rest_cold_tier.cpp
     # prefix
     src/prefix/art_index.cpp
     src/prefix/epoch.cpp

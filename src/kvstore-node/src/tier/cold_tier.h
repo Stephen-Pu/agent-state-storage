@@ -78,10 +78,25 @@ class FilesystemColdTier final : public IColdTier {
     Options opts_;
 };
 
-// Factory for selecting a backend by name. Today: "fs" only.
+// Factory for selecting a backend by name.
+//   "fs" / "fuse-mount" -> FilesystemColdTier (POSIX path / FUSE mount)
+//   "native-rest"       -> RestColdTier       (direct HTTP object store; B3)
 struct ColdTierOptions {
-    std::string                 type = "fs";  // "fs" | "fuse-mount" (alias of fs) | "native-rest" (TODO)
+    std::string                 type = "fs";
     FilesystemColdTier::Options fs;
+    // REST backend options. A self-contained POD mirror of
+    // RestColdTier::Options — kept here (rather than including
+    // rest_cold_tier.h) so this header stays free of the transport seam.
+    // Only set/read when type == "native-rest".
+    struct Rest {
+        std::string base_url;
+        std::string key_prefix = "kvcache/";
+        std::string bearer_token;
+        std::string ca_pem_path;
+        std::string client_cert_pem_path;
+        std::string client_key_pem_path;
+        long        timeout_ms = 30000;
+    } rest;
 };
 std::unique_ptr<IColdTier> CreateColdTier(const ColdTierOptions& opts, std::string* err);
 

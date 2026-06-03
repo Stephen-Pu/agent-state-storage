@@ -1,6 +1,8 @@
 // LLD §3.3 T4 — FilesystemColdTier implementation.
 #include "tier/cold_tier.h"
 
+#include "tier/rest_cold_tier.h"  // B3 — native-rest backend
+
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
@@ -160,10 +162,16 @@ std::unique_ptr<IColdTier> CreateColdTier(const ColdTierOptions& opts, std::stri
         return FilesystemColdTier::Create(opts.fs, err);
     }
     if (opts.type == "native-rest") {
-        // TODO(stephen): native REST / gRPC UFS client. For MVP we route
-        // through the FUSE mount to keep one code path.
-        if (err) *err = "cold_tier: 'native-rest' backend not yet implemented";
-        return nullptr;
+        // B3 — direct HTTP object-store / REST UFS client.
+        RestColdTier::Options ro;
+        ro.base_url             = opts.rest.base_url;
+        ro.key_prefix           = opts.rest.key_prefix;
+        ro.bearer_token         = opts.rest.bearer_token;
+        ro.ca_pem_path          = opts.rest.ca_pem_path;
+        ro.client_cert_pem_path = opts.rest.client_cert_pem_path;
+        ro.client_key_pem_path  = opts.rest.client_key_pem_path;
+        ro.timeout_ms           = opts.rest.timeout_ms;
+        return RestColdTier::Create(ro, err);
     }
     if (err) *err = "cold_tier: unknown backend type '" + opts.type + "'";
     return nullptr;
