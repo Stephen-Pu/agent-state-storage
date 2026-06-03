@@ -54,6 +54,7 @@ go: go-proto
 #   go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
 go-proto:
 	$(MAKE) -C src/control-plane proto
+	$(MAKE) -C src/kvctl proto
 
 go-test: go-proto
 	cd src/control-plane && go test -short -count=1 ./...

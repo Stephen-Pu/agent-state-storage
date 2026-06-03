@@ -23,7 +23,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -35,6 +37,10 @@ import (
 
 	"github.com/spf13/cobra"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+
+	nodepb "github.com/Stephen-Pu/kvcache/kvctl/internal/nodepb"
 )
 
 const (
@@ -365,27 +371,113 @@ func newUndrainCmd(g *globalFlags) *cobra.Command {
 	return cmd
 }
 
-// ---- trace (stub) ---------------------------------------------------------
+// ---- trace ----------------------------------------------------------------
+
+// formatEvent renders one KV Event as a single trace line. Pure (no I/O)
+// so it's unit-testable without a live stream.
+func formatEvent(ev *nodepb.Event) string {
+	loc := ev.GetLocator()
+	var prefix, tenant string
+	if loc != nil {
+		prefix = hex.EncodeToString(loc.GetPrefixHash())
+		tenant = hex.EncodeToString(loc.GetTenantId())
+	}
+	// nanos → RFC3339 for human reading; fall back to raw if 0.
+	ts := ev.GetUnixNano()
+	when := "—"
+	if ts > 0 {
+		when = time.Unix(0, ts).UTC().Format("15:04:05.000")
+	}
+	return fmt.Sprintf("%-12s  %-9s  %-7s  tenant=%s  prefix=%s  epoch=%d  node=%s",
+		when,
+		strings.TrimPrefix(ev.GetType().String(), "EVENT_"),
+		strings.TrimPrefix(ev.GetTier().String(), "TIER_"),
+		shortHex(tenant), shortHex(prefix), ev.GetEpoch(), ev.GetNodeId())
+}
+
+func shortHex(s string) string {
+	if len(s) <= 12 {
+		return s
+	}
+	return s[:12] + "…"
+}
 
 func newTraceCmd(g *globalFlags) *cobra.Command {
-	_ = g
-	return &cobra.Command{
-		Use:   "trace <request_id>",
-		Short: "Tail request-level trace events (NOT YET IMPLEMENTED)",
-		Args:  cobra.ExactArgs(1),
+	var node string
+	var tenant string
+	var prefixFilter string
+	cmd := &cobra.Command{
+		Use:   "trace --node <host:port> --tenant <hex>",
+		Short: "Tail the node's live KV event stream (ADD/EVICT/PROMOTE/DEMOTE)",
+		Long: "Opens the kvstore-node NodeData.Subscribe gRPC stream and prints " +
+			"sealed-chunk lifecycle events for a tenant as they happen. " +
+			"Filter to one prefix with --prefix (hex of the 16-byte " +
+			"prefix_hash). Ctrl-C to stop.\n\n" +
+			"NOTE: the event stream is keyed by (tenant, epoch, prefix), not " +
+			"by request_id — per-request OTLP span correlation is a separate " +
+			"OTLP-collector concern (Phase J-2), not this stream.",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_ = args
-			fmt.Fprintln(cmd.ErrOrStderr(),
-				"kvctl trace: not yet implemented.")
-			fmt.Fprintln(cmd.ErrOrStderr(),
-				"  Needs the kvstore-node Subscribe gRPC stream (Phase M-2)")
-			fmt.Fprintln(cmd.ErrOrStderr(),
-				"  filtered by request_id + OTLP span correlation (J-1).")
-			fmt.Fprintln(cmd.ErrOrStderr(),
-				"  Land in Phase A2.2.")
-			return fmt.Errorf("trace tail not yet implemented (see message above)")
+			if node == "" {
+				return fmt.Errorf("--node <host:port> is required")
+			}
+			if tenant == "" {
+				return fmt.Errorf("--tenant <hex tenant_id> is required")
+			}
+			tenantBytes, err := hex.DecodeString(tenant)
+			if err != nil {
+				return fmt.Errorf("--tenant must be hex: %w", err)
+			}
+			var wantPrefix []byte
+			if prefixFilter != "" {
+				if wantPrefix, err = hex.DecodeString(prefixFilter); err != nil {
+					return fmt.Errorf("--prefix must be hex: %w", err)
+				}
+			}
+
+			conn, err := grpc.NewClient(node,
+				grpc.WithTransportCredentials(insecure.NewCredentials()))
+			if err != nil {
+				return fmt.Errorf("dial %s: %w", node, err)
+			}
+			defer conn.Close()
+			client := nodepb.NewNodeDataClient(conn)
+
+			// Stream runs until Ctrl-C (cmd.Context() is the signal ctx).
+			stream, err := client.Subscribe(cmd.Context(), &nodepb.SubscribeRequest{
+				TenantId:   string(tenantBytes),
+				StartEpoch: 0, // "from now"
+			})
+			if err != nil {
+				return fmt.Errorf("Subscribe: %w", err)
+			}
+			out := cmd.OutOrStdout()
+			fmt.Fprintf(out, "tracing tenant=%s on %s (Ctrl-C to stop)\n",
+				shortHex(tenant), node)
+			for {
+				ev, err := stream.Recv()
+				if err != nil {
+					// Clean EOF on Ctrl-C / server close.
+					if cmd.Context().Err() != nil {
+						return nil
+					}
+					return fmt.Errorf("stream: %w", err)
+				}
+				if wantPrefix != nil {
+					if loc := ev.GetLocator(); loc == nil ||
+						!bytes.Equal(loc.GetPrefixHash(), wantPrefix) {
+						continue
+					}
+				}
+				fmt.Fprintln(out, formatEvent(ev))
+			}
 		},
 	}
+	cmd.Flags().StringVar(&node, "node", "", "kvstore-node gRPC endpoint (host:port)")
+	cmd.Flags().StringVar(&tenant, "tenant", "", "tenant_id as hex (16 bytes → 32 hex chars)")
+	cmd.Flags().StringVar(&prefixFilter, "prefix", "",
+		"only show events for this prefix_hash (hex); empty = all")
+	return cmd
 }
 
 // ---- version --------------------------------------------------------------

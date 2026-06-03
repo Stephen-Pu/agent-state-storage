@@ -10,6 +10,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	nodepb "github.com/Stephen-Pu/kvcache/kvctl/internal/nodepb"
 )
 
 func TestSummariseMetrics_BasicShape(t *testing.T) {
@@ -62,21 +64,6 @@ func TestDrainKeyMatchesCpFormat(t *testing.T) {
 	}
 }
 
-func TestTraceStubExitsWithMessage(t *testing.T) {
-	g := &globalFlags{}
-	c := newTraceCmd(g)
-	c.SetArgs([]string{"req-7"})
-	var errOut bytes.Buffer
-	c.SetErr(&errOut)
-	err := c.Execute()
-	if err == nil {
-		t.Fatal("trace stub must return an error")
-	}
-	if !strings.Contains(errOut.String(), "not yet implemented") {
-		t.Errorf("missing helpful stderr message; got: %q", errOut.String())
-	}
-}
-
 func TestVersionCommand(t *testing.T) {
 	c := newVersionCmd()
 	var out bytes.Buffer
@@ -123,5 +110,75 @@ func TestEnvOr_FallsBack(t *testing.T) {
 	t.Setenv("KVCTL_EMPTY_VAR", "")
 	if got := envOr("KVCTL_EMPTY_VAR", "fb"); got != "fb" {
 		t.Errorf("envOr empty var should fall back; got %q", got)
+	}
+}
+
+// ===== Phase A2.2-trace — kvctl trace =======================================
+
+func TestFormatEvent(t *testing.T) {
+	ev := &nodepb.Event{
+		Type:     nodepb.EventType_EVENT_ADD,
+		Tier:     nodepb.Tier_TIER_PINNED,
+		Epoch:    42,
+		NodeId:   "node-a",
+		UnixNano: 0, // → "—" timestamp, deterministic
+		Locator: &nodepb.Locator{
+			TenantId:   []byte("0123456789abcdef"),
+			PrefixHash: []byte("fedcba9876543210"),
+		},
+	}
+	line := formatEvent(ev)
+	for _, want := range []string{"ADD", "PINNED", "epoch=42", "node=node-a"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("formatEvent missing %q in: %s", want, line)
+		}
+	}
+	// EVENT_/TIER_ prefixes must be stripped for readability.
+	if strings.Contains(line, "EVENT_") || strings.Contains(line, "TIER_") {
+		t.Errorf("enum prefixes should be stripped: %s", line)
+	}
+}
+
+func TestShortHex(t *testing.T) {
+	if shortHex("abcd") != "abcd" {
+		t.Error("short string unchanged")
+	}
+	long := "0123456789abcdef0123"
+	got := shortHex(long)
+	if !strings.HasPrefix(got, "0123456789ab") || !strings.HasSuffix(got, "…") {
+		t.Errorf("shortHex truncation wrong: %q", got)
+	}
+}
+
+func TestTraceRequiresNodeAndTenant(t *testing.T) {
+	g := &globalFlags{}
+	// No --node → error.
+	c := newTraceCmd(g)
+	c.SetArgs([]string{})
+	var e1 bytes.Buffer
+	c.SetErr(&e1)
+	c.SetOut(&e1)
+	if err := c.Execute(); err == nil {
+		t.Fatal("trace without --node must error")
+	}
+
+	// --node but no --tenant → error.
+	c2 := newTraceCmd(g)
+	c2.SetArgs([]string{"--node", "127.0.0.1:7100"})
+	var e2 bytes.Buffer
+	c2.SetErr(&e2)
+	c2.SetOut(&e2)
+	if err := c2.Execute(); err == nil {
+		t.Fatal("trace without --tenant must error")
+	}
+
+	// bad hex tenant → error (before any dial).
+	c3 := newTraceCmd(g)
+	c3.SetArgs([]string{"--node", "127.0.0.1:7100", "--tenant", "nothex!!"})
+	var e3 bytes.Buffer
+	c3.SetErr(&e3)
+	c3.SetOut(&e3)
+	if err := c3.Execute(); err == nil {
+		t.Fatal("trace with non-hex tenant must error")
 	}
 }
