@@ -11,17 +11,22 @@
 //       (a) local disk staging (tests, dev)
 //       (b) a multi-cloud UFS mounted via FUSE (production default)
 //       (c) any POSIX-mounted UFS
-//   * Native REST / gRPC UFS client = Phase-2 (TODO(stephen)) once it
-//     proves to be needed beyond what the FUSE mount delivers.
+//   * Native REST / HTTP object-store client — `RestColdTier` (Phase B3,
+//     rest_cold_tier.h), for hosts without a FUSE mount or when the data
+//     plane should own the UFS connection directly.
 //
 // Layout under the root directory:
 //   {root}/{first_2_hex(key)}/{rest_of_hex(key)}.kv
 // The 2-hex shard byte keeps any single directory under ~65k files, which is
 // well within ext4 / xfs single-directory comfort.
 //
-// Compression / encryption are out of scope here; they will live in a
-// pluggable middleware layer wrapped around the IColdTier interface
-// (TODO(stephen): zstd + SSE-S3 once defined by ⑩/MVP item).
+// Compression / encryption live in a pluggable middleware layer wrapped
+// around the IColdTier interface, selected via ColdTierOptions:
+//   * compression — `CompressingColdTier` (Phase B3.1): identity / zstd.
+//   * encryption  — `EncryptingColdTier` (Phase B3.2): AES-256-GCM.
+// Stacked compress-outer / encrypt-inner so data is compressed then sealed.
+// (Future cut: per-blob KMS-envelope key rotation; SigV4 transport decorator
+// for direct AWS S3 — see rest_cold_tier.h.)
 #pragma once
 
 #include <cstdint>
