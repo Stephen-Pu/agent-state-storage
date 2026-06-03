@@ -65,6 +65,11 @@ func main() {
 	if err := (&controller.KVCacheTenantReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
+		// Production etcd publishers: validated quota (H-4) + the mTLS
+		// identity allow-list (B8.4). Both dial the per-cluster etcd
+		// discovered from the parent KVCacheCluster.
+		Publisher:         &controller.EtcdTenantPublisher{},
+		IdentityPublisher: &controller.EtcdIdentityPublisher{},
 	}).SetupWithManager(mgr); err != nil {
 		setupExit("unable to set up KVCacheTenant controller", err)
 	}

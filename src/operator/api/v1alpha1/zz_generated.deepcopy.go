@@ -129,8 +129,39 @@ func (in *KVCacheTenant) DeepCopyInto(out *KVCacheTenant) {
 	*out = *in
 	out.TypeMeta = in.TypeMeta
 	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
-	out.Spec = in.Spec
+	in.Spec.DeepCopyInto(&out.Spec)
 	in.Status.DeepCopyInto(&out.Status)
+}
+
+func (in *KVCacheTenantSpec) DeepCopyInto(out *KVCacheTenantSpec) {
+	*out = *in
+	out.Quota = in.Quota
+	if in.AllowedIdentities != nil {
+		out.AllowedIdentities = make([]TenantIdentity, len(in.AllowedIdentities))
+		copy(out.AllowedIdentities, in.AllowedIdentities)
+	}
+}
+
+func (in *KVCacheTenantSpec) DeepCopy() *KVCacheTenantSpec {
+	if in == nil {
+		return nil
+	}
+	out := new(KVCacheTenantSpec)
+	in.DeepCopyInto(out)
+	return out
+}
+
+func (in *TenantIdentity) DeepCopyInto(out *TenantIdentity) {
+	*out = *in
+}
+
+func (in *TenantIdentity) DeepCopy() *TenantIdentity {
+	if in == nil {
+		return nil
+	}
+	out := new(TenantIdentity)
+	in.DeepCopyInto(out)
+	return out
 }
 
 func (in *KVCacheTenant) DeepCopy() *KVCacheTenant {

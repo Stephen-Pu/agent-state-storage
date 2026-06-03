@@ -40,6 +40,19 @@ spec:
                   enum: [P0, P1, P2]
                 deletionPending:
                   type: boolean
+                allowedIdentities:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      spiffeID:
+                        type: string
+                        pattern: "^spiffe://.+"
+                      cn:
+                        type: string
+                      kind:
+                        type: string
+                        enum: [tenant, internal, admin]
             status:
               type: object
               x-kubernetes-preserve-unknown-fields: true

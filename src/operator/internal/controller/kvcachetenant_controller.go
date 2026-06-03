@@ -24,6 +24,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -47,14 +48,21 @@ type KVCacheTenantReconciler struct {
 	// inject a fake. nil = skip the publish step entirely (no-op),
 	// useful for environments where etcd is wired separately.
 	Publisher TenantPublisher
+
+	// IdentityPublisher pushes the tenant's mTLS identity allow-list into
+	// etcd (Phase B8.4) for the node-side IdentityWatcher to consume.
+	// Production binding is EtcdIdentityPublisher; tests inject a fake.
+	// nil = skip identity publishing.
+	IdentityPublisher IdentityPublisher
 }
 
 // +kubebuilder:rbac:groups=kvcache.io,resources=kvcachetenants,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=kvcache.io,resources=kvcachetenants/status,verbs=get;update;patch
 
 const (
-	validatedConditionType = "Validated"
-	publishedConditionType = "Published"
+	validatedConditionType           = "Validated"
+	publishedConditionType           = "Published"
+	identitiesPublishedConditionType = "IdentitiesPublished"
 )
 
 func (r *KVCacheTenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -78,12 +86,13 @@ func (r *KVCacheTenantReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 	changed := replaceCondition(&tenant.Status.Conditions, validated)
 
-	// Publish step: only when validation succeeded and a Publisher is
-	// wired in. Failure here surfaces as Published=False with the
-	// underlying error — we requeue so the next reconcile retries
+	// Publish step: only when validation succeeded and at least one
+	// publisher is wired in. Failures surface as a False condition with
+	// the underlying error — we requeue so the next reconcile retries
 	// against a possibly-now-reachable etcd.
 	requeue := false
-	if validated.Status == metav1.ConditionTrue && r.Publisher != nil {
+	if validated.Status == metav1.ConditionTrue &&
+		(r.Publisher != nil || r.IdentityPublisher != nil) {
 		// Resolve the parent cluster — already verified to exist by
 		// validateTenant, but we need its spec for endpoint discovery.
 		var cluster kvcachev1alpha1.KVCacheCluster
@@ -91,21 +100,43 @@ func (r *KVCacheTenantReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			Name:      tenant.Spec.ClusterRef,
 			Namespace: tenant.Namespace,
 		}, &cluster); err == nil {
-			pubCond := metav1.Condition{
-				Type:               publishedConditionType,
-				LastTransitionTime: metav1.Now(),
+			if r.Publisher != nil {
+				pubCond := metav1.Condition{
+					Type:               publishedConditionType,
+					LastTransitionTime: metav1.Now(),
+				}
+				if err := r.Publisher.Publish(ctx, &cluster, &tenant); err != nil {
+					pubCond.Status  = metav1.ConditionFalse
+					pubCond.Reason  = "EtcdPutFailed"
+					pubCond.Message = err.Error()
+					requeue = true
+				} else {
+					pubCond.Status = metav1.ConditionTrue
+					pubCond.Reason = "Published"
+				}
+				if replaceCondition(&tenant.Status.Conditions, pubCond) {
+					changed = true
+				}
 			}
-			if err := r.Publisher.Publish(ctx, &cluster, &tenant); err != nil {
-				pubCond.Status  = metav1.ConditionFalse
-				pubCond.Reason  = "EtcdPutFailed"
-				pubCond.Message = err.Error()
-				requeue = true
-			} else {
-				pubCond.Status = metav1.ConditionTrue
-				pubCond.Reason = "Published"
-			}
-			if replaceCondition(&tenant.Status.Conditions, pubCond) {
-				changed = true
+
+			if r.IdentityPublisher != nil {
+				idCond := metav1.Condition{
+					Type:               identitiesPublishedConditionType,
+					LastTransitionTime: metav1.Now(),
+				}
+				if err := r.IdentityPublisher.PublishIdentities(ctx, &cluster, &tenant); err != nil {
+					idCond.Status  = metav1.ConditionFalse
+					idCond.Reason  = "EtcdPutFailed"
+					idCond.Message = err.Error()
+					requeue = true
+				} else {
+					idCond.Status  = metav1.ConditionTrue
+					idCond.Reason  = "Published"
+					idCond.Message = fmt.Sprintf("%d identities", len(tenant.Spec.AllowedIdentities))
+				}
+				if replaceCondition(&tenant.Status.Conditions, idCond) {
+					changed = true
+				}
 			}
 		}
 	}
@@ -182,6 +213,28 @@ func validateTenant(ctx context.Context, c client.Client,
 	}
 	if err != nil {
 		return "ClusterLookupFailed", err.Error()
+	}
+
+	// 5. allowedIdentities (Phase B8.4): each entry must carry at least one
+	// of spiffeID / cn (an entry with neither is unkeyable and the node
+	// watcher would reject it); a SPIFFE id must be a spiffe:// URI; kind
+	// is one of the three classes (empty defaults to "tenant" at publish).
+	for i, id := range spec.AllowedIdentities {
+		if id.SpiffeID == "" && id.CN == "" {
+			return "InvalidIdentity",
+				fmt.Sprintf("allowedIdentities[%d]: spiffeID or cn is required", i)
+		}
+		if id.SpiffeID != "" && !strings.HasPrefix(id.SpiffeID, "spiffe://") {
+			return "InvalidIdentity",
+				fmt.Sprintf("allowedIdentities[%d].spiffeID must be a spiffe:// URI", i)
+		}
+		switch id.Kind {
+		case "", "tenant", "internal", "admin":
+		default:
+			return "InvalidIdentity",
+				fmt.Sprintf("allowedIdentities[%d].kind must be tenant|internal|admin; got %q",
+					i, id.Kind)
+		}
 	}
 
 	return "", ""

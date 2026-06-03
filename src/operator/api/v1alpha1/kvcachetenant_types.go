@@ -25,6 +25,30 @@ type KVCacheTenantSpec struct {
 	// When set, the operator will start a right-to-erase reconcile loop
 	// (LLD §5.2 — 24h SLA) and refuse new reserves on this tenant.
 	DeletionPending bool `json:"deletionPending,omitempty"`
+
+	// AllowedIdentities is the mTLS identity allow-list for this tenant
+	// (Phase B8.4). The operator publishes one entry per identity to
+	// etcd under /kvcache/identities/<cluster>/<tenantID>/<id>, where the
+	// node-side IdentityWatcher (B8.3) loads them into the MtlsRegistry so
+	// the B8.2 tenant-cert binding can resolve a client cert → this tenant.
+	// Each entry must carry at least one of spiffeID / cn.
+	AllowedIdentities []TenantIdentity `json:"allowedIdentities,omitempty"`
+}
+
+// TenantIdentity is one mTLS principal allowed to act as this tenant.
+type TenantIdentity struct {
+	// SPIFFE ID bound into the client cert's URI SAN, e.g.
+	// "spiffe://example.org/tenant/acme". Preferred over CN.
+	// +kubebuilder:validation:Pattern=`^spiffe://.+`
+	SpiffeID string `json:"spiffeID,omitempty"`
+
+	// Certificate Common Name, used when no SPIFFE ID is issued.
+	CN string `json:"cn,omitempty"`
+
+	// Identity class consumed by node-side authz. Empty defaults to
+	// "tenant" at publish time.
+	// +kubebuilder:validation:Enum=tenant;internal;admin
+	Kind string `json:"kind,omitempty"`
 }
 
 type QuotaSpec struct {
