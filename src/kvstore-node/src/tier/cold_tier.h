@@ -97,6 +97,13 @@ struct ColdTierOptions {
         std::string client_key_pem_path;
         long        timeout_ms = 30000;
     } rest;
+    // Compression middleware (Phase B3.1). When codec != "none" the selected
+    // backend is wrapped in a CompressingColdTier. "none"|"identity"|"zstd"
+    // ("zstd" requires a KVCACHE_ENABLE_ZSTD build).
+    struct Compression {
+        std::string codec = "none";
+        int         level = 3;  // zstd level (ignored by identity)
+    } compression;
 };
 std::unique_ptr<IColdTier> CreateColdTier(const ColdTierOptions& opts, std::string* err);
 

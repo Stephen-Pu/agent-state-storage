@@ -50,6 +50,10 @@ option(KVCACHE_ENABLE_CUDA    "Enable CUDA / GDS code paths"     OFF)
 option(KVCACHE_ENABLE_ROCKSDB "Link against RocksDB"             OFF)
 # Phase B1 — Linux-only io_uring backend for NvmeTier.
 option(KVCACHE_ENABLE_URING   "Build NvmeTier with liburing path" OFF)
+# Phase B3.1 — zstd compression middleware for the cold tier. Default OFF so
+# the standard build needs no extra dep; the codec seam ships an always-on
+# identity codec, and the zstd codec compiles only when this is ON.
+option(KVCACHE_ENABLE_ZSTD    "Build cold-tier zstd compression codec" OFF)
 
 if(KVCACHE_ENABLE_ROCKSDB)
     # Phase B10 — prefer the CMake CONFIG package (Homebrew, vcpkg, a
@@ -85,6 +89,15 @@ if(KVCACHE_ENABLE_URING)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(LIBURING REQUIRED liburing)
     add_compile_definitions(KVCACHE_ENABLE_URING=1)
+endif()
+
+if(KVCACHE_ENABLE_ZSTD)
+    # libzstd ships libzstd.pc on every platform (Homebrew, apt
+    # libzstd-dev, vcpkg). Use IMPORTED_TARGET so downstream links the
+    # clean PkgConfig::ZSTD target. REQUIRED — the user asked for it.
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(ZSTD REQUIRED IMPORTED_TARGET libzstd)
+    add_compile_definitions(KVCACHE_HAVE_ZSTD=1)
 endif()
 
 # --------------------------------------------------------------------------

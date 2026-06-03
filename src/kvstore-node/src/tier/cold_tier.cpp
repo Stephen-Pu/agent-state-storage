@@ -1,7 +1,9 @@
 // LLD §3.3 T4 — FilesystemColdTier implementation.
 #include "tier/cold_tier.h"
 
-#include "tier/rest_cold_tier.h"  // B3 — native-rest backend
+#include "tier/rest_cold_tier.h"          // B3  — native-rest backend
+#include "tier/compressing_cold_tier.h"   // B3.1 — compression middleware
+#include "tier/block_codec.h"
 
 #include <cerrno>
 #include <cstdio>
@@ -156,7 +158,11 @@ bool FilesystemColdTier::Exists(const DramKey& key) const {
 // Factory
 // ---------------------------------------------------------------------------
 
-std::unique_ptr<IColdTier> CreateColdTier(const ColdTierOptions& opts, std::string* err) {
+namespace {
+
+// Build the base backend selected by opts.type, before any middleware.
+std::unique_ptr<IColdTier> CreateBaseColdTier(const ColdTierOptions& opts,
+                                              std::string* err) {
     if (opts.type == "fs" || opts.type == "fuse-mount") {
         // fuse-mount is "just" a POSIX mount; same impl.
         return FilesystemColdTier::Create(opts.fs, err);
@@ -175,6 +181,23 @@ std::unique_ptr<IColdTier> CreateColdTier(const ColdTierOptions& opts, std::stri
     }
     if (err) *err = "cold_tier: unknown backend type '" + opts.type + "'";
     return nullptr;
+}
+
+}  // namespace
+
+std::unique_ptr<IColdTier> CreateColdTier(const ColdTierOptions& opts, std::string* err) {
+    auto base = CreateBaseColdTier(opts, err);
+    if (!base) return nullptr;
+
+    // B3.1 — optional compression middleware. "none" leaves the base tier
+    // bare (zero overhead); any other codec wraps it.
+    if (opts.compression.codec.empty() ||
+        opts.compression.codec == "none") {
+        return base;
+    }
+    auto codec = MakeCodec(opts.compression.codec, opts.compression.level, err);
+    if (!codec) return nullptr;  // unknown / uncompiled codec — *err set
+    return CompressingColdTier::Create(std::move(base), std::move(codec), err);
 }
 
 }  // namespace kvcache::node::tier

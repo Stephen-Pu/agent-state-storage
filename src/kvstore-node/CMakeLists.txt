@@ -11,6 +11,8 @@ set(NODE_CORE_SRCS
     src/tier/nvme_tier.cpp
     src/tier/cold_tier.cpp
     src/tier/rest_cold_tier.cpp
+    src/tier/block_codec.cpp
+    src/tier/compressing_cold_tier.cpp
     # prefix
     src/prefix/art_index.cpp
     src/prefix/epoch.cpp
@@ -82,6 +84,13 @@ target_link_libraries(kvstore_node_core
 if(KVCACHE_ENABLE_URING)
     target_include_directories(kvstore_node_core PUBLIC ${LIBURING_INCLUDE_DIRS})
     target_link_libraries(kvstore_node_core      PUBLIC ${LIBURING_LIBRARIES})
+endif()
+
+# Phase B3.1 — link libzstd when the cold-tier zstd codec is enabled. The
+# compile-time KVCACHE_HAVE_ZSTD define (set at the top level) gates the
+# ZstdCodec body in block_codec.cpp.
+if(KVCACHE_ENABLE_ZSTD)
+    target_link_libraries(kvstore_node_core PUBLIC PkgConfig::ZSTD)
 endif()
 
 # Phase B8 — security/mtls.cpp uses OpenSSL X.509 when available
