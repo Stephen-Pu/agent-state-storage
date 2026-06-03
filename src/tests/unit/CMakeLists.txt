@@ -223,6 +223,8 @@ kvcache_add_test(test_metrics           obs/metrics_test.cpp)
 kvcache_add_test(test_logs              common/log_sink_test.cpp)
 # Phase W-1 — Locator wire (de)serialization + canonical LE byte layout.
 kvcache_add_test(test_locator           common/locator_test.cpp)
+# Phase W-2 — canonical FNV-1a-64 golden vectors (cross-language lock).
+kvcache_add_test(test_hashing           common/hashing_test.cpp)
 kvcache_add_test(test_node_runtime      runtime/node_runtime_test.cpp
                  ${KVCACHE_NODE_SRC}/runtime/node_runtime.cpp)
 

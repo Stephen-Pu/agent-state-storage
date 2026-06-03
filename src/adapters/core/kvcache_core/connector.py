@@ -21,6 +21,22 @@ from . import _ffi
 _ABI_VERSION = 2  # ABI-1: kv_ctx_config_t gained the trailing `tuning` pointer
 _CHUNK_TOKENS = 16  # LLD §3.2
 
+_FNV_OFFSET = 0xCBF29CE484222325
+_FNV_PRIME = 0x100000001B3
+_U64_MASK = 0xFFFFFFFFFFFFFFFF
+
+
+def fnv1a64(data: bytes) -> int:
+    """Canonical FNV-1a 64-bit — MUST match the C++ kvcache::Fnv1a64
+    (src/core/common/hashing.h). The wire contract requires both sides to
+    agree on model_id_hash; golden-vector tests on each side lock it
+    (test_hashing.cpp / tests/test_connector_hash.py)."""
+    h = _FNV_OFFSET
+    for ch in data:
+        h ^= ch
+        h = (h * _FNV_PRIME) & _U64_MASK
+    return h
+
 
 class KVCacheError(RuntimeError):
     """Raised on any non-OK Core ABI return code."""
@@ -91,12 +107,8 @@ class KVCacheConnector:
         for i, b in enumerate(tid_digest):
             loc.tenant_id[i] = b
         # model_id_hash: 64-bit FNV-1a — must match HeadlessNode's hash in
-        # kv_ctx_open (kept identical to keep wiring trivial).
-        h = 0xCBF29CE484222325
-        for ch in self._mid:
-            h ^= ch
-            h = (h * 0x100000001B3) & 0xFFFFFFFFFFFFFFFF
-        loc.model_id_hash = h
+        # kv_ctx_open (canonical kvcache::Fnv1a64, hashing.h).
+        loc.model_id_hash = fnv1a64(self._mid)
         # prefix_hash: BLAKE2b-128 of the LE-packed token bytes.
         tok_bytes = b"".join(int(t).to_bytes(4, "little") for t in tokens)
         ph = hashlib.blake2b(tok_bytes, digest_size=16).digest()

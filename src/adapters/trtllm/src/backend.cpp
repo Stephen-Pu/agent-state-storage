@@ -9,6 +9,7 @@
 #include "kvcache/kv_abi.h"
 #include "kvcache/kv_errors.h"
 #include "kvcache/kv_types.h"
+#include "hashing.h"  // Phase W-2 — canonical kvcache::Fnv1a64
 
 #include <cstdint>
 #include <cstring>
@@ -27,18 +28,11 @@ namespace {
     throw std::runtime_error(std::move(msg));
 }
 
-// FNV-1a 64-bit hash — matches the C ABI side's model_id / tenant_id_hash
-// derivation in kv_abi.cpp. We rebuild a locator client-side because the
-// reserve / seal path doesn't accept a token-list directly; it wants a
-// pre-computed locator + range.
-uint64_t Fnv1a64(const std::string& s) {
-    uint64_t h = 0xcbf29ce484222325ULL;
-    for (char c : s) {
-        h ^= static_cast<uint8_t>(c);
-        h *= 0x100000001b3ULL;
-    }
-    return h;
-}
+// model_id / tenant_id_hash use the canonical kvcache::Fnv1a64 (hashing.h)
+// — the same hash the C ABI (kv_abi.cpp) and Python connector derive, so a
+// locator built client-side here resolves to the same ctx / namespace. We
+// rebuild a locator client-side because the reserve / seal path wants a
+// pre-computed locator + range, not a token list.
 
 // Lightweight prefix_hash for the Locator built in Store(): the C ABI side
 // derives chunk paths from the token bytes via Blake3, but Store only
@@ -136,10 +130,10 @@ void TrtLlmKVCacheBackend::Store(std::span<const uint32_t> tokens,
     // 16B range + 4B version + 4B flags.
     kv_locator_t loc{};
     // tenant_id: FNV-1a of the tenant string, broadcast across 16 bytes.
-    uint64_t th = Fnv1a64(tenant_id_);
+    uint64_t th = kvcache::Fnv1a64(tenant_id_);
     for (int i = 0; i < 8; ++i) loc.tenant_id[i]     = static_cast<uint8_t>(th >> (i * 8));
     for (int i = 0; i < 8; ++i) loc.tenant_id[8 + i] = static_cast<uint8_t>(th >> (i * 8));
-    loc.model_id_hash = Fnv1a64(model_id_);
+    loc.model_id_hash = kvcache::Fnv1a64(model_id_);
     FillPrefixHash(tokens, loc.prefix_hash);
     loc.version = 1;
     loc.flags   = 0;

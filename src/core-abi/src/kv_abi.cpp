@@ -10,6 +10,7 @@
 #include <string>
 
 #include "ctx_options.h"  // Phase ABI-1 — BuildCtxOptions
+#include "hashing.h"      // Phase W-2 — canonical kvcache::Fnv1a64
 #include "headless_node.h"
 #include "kvcache/kv_errors.h"
 #include "metrics.h"  // Phase G-3 — kv_metrics_scrape ABI
@@ -34,22 +35,6 @@ struct kv_ctx_s {
     kvcache::abi::HeadlessNode::SubscriptionId sub_id = 0;
 };
 
-namespace {
-
-// FNV-1a 64-bit hash. Same primitives as model_id_hash; deliberately not
-// cryptographic — the scheduler only needs a stable, distinct-per-string
-// identifier for fair RR rotation.
-uint64_t Fnv1a64(const std::string& s) {
-    uint64_t h = 0xcbf29ce484222325ULL;
-    for (char ch : s) {
-        h ^= static_cast<uint8_t>(ch);
-        h *= 0x100000001b3ULL;
-    }
-    return h;
-}
-
-}  // namespace
-
 KV_API int kv_ctx_open(const kv_ctx_config_t* cfg, kv_ctx_t** out_ctx) {
     if (!cfg || !out_ctx) return KV_E_INVAL;
     if (cfg->abi_version != KVCACHE_ABI_VERSION) return KV_E_VERSION_MISMATCH;
@@ -64,8 +49,8 @@ KV_API int kv_ctx_open(const kv_ctx_config_t* cfg, kv_ctx_t** out_ctx) {
     auto c = new kv_ctx_s();
     if (cfg->tenant_id) c->tenant_id = cfg->tenant_id;
     if (cfg->model_id)  c->model_id  = cfg->model_id;
-    c->model_id_hash  = Fnv1a64(c->model_id);
-    c->tenant_id_hash = c->tenant_id.empty() ? 0 : Fnv1a64(c->tenant_id);
+    c->model_id_hash  = kvcache::Fnv1a64(c->model_id);
+    c->tenant_id_hash = c->tenant_id.empty() ? 0 : kvcache::Fnv1a64(c->tenant_id);
     c->node = node;
     *out_ctx = c;
     return KV_OK;

@@ -29,6 +29,7 @@
 #include "cluster/drain_gate.h"       // Phase A2.3 — Reserve gate
 #include "cluster/node_directory.h"
 #include "security/mtls.h"            // Phase B8.2 — ResolveTenant
+#include "hashing.h"                  // Phase W-2 — canonical kvcache::Fnv1a64
 #include "kvcache/kv_errors.h"
 #include "kvcache/kv_types.h"
 #include "routing/hrw.h"
@@ -43,16 +44,6 @@ namespace {
 // with. Bytes-form (used for the Locator's 16-byte tenant_id) yields
 // a deterministic-but-distinct namespace; that's fine because the
 // PriorityScheduler only cares about *some* stable per-tenant id.
-uint64_t Fnv1a64Bytes(const void* data, std::size_t n) {
-    auto* p = static_cast<const uint8_t*>(data);
-    uint64_t h = 0xcbf29ce484222325ULL;
-    for (std::size_t i = 0; i < n; ++i) {
-        h ^= p[i];
-        h *= 0x100000001b3ULL;
-    }
-    return h;
-}
-
 // Phase Q-5 — derive the same 16-byte tenant fingerprint the Python
 // connector puts in `Locator.tenant_id`: first 16 bytes of SHA-1
 // over the tenant string. Then FNV-1a those 16 bytes. This matches
@@ -67,12 +58,12 @@ uint64_t HashTenantString(const std::string& s) {
     // First 16 bytes mirror what the Python connector stores in the
     // Locator's 16-byte tenant_id field — see
     // src/adapters/core/kvcache_core/connector.py make_locator().
-    return Fnv1a64Bytes(digest, 16);
+    return kvcache::Fnv1a64(digest, 16);
 }
 
 uint64_t HashTenantBytes16(const std::string& s) {
     // Locator.tenant_id is 16 bytes (may include trailing nulls).
-    return s.empty() ? 0 : Fnv1a64Bytes(s.data(), s.size());
+    return s.empty() ? 0 : kvcache::Fnv1a64(s.data(), s.size());
 }
 
 ::grpc::Status ToGrpcStatus(int rc, const char* op) {

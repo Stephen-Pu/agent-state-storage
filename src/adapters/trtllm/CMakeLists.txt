@@ -15,6 +15,10 @@ target_include_directories(kvcache_trtllm
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     PRIVATE
         ${CMAKE_SOURCE_DIR}/include
+        # Phase W-2 — canonical kvcache::Fnv1a64 lives in core/common/hashing.h.
+        # Header-only + inline, so this adds NO link dependency (the adapter
+        # still links only the public C ABI, per the note below).
+        ${CMAKE_SOURCE_DIR}/core/common
 )
 
 # Compile in PIC so a downstream TRT-LLM plugin .so can absorb us.
