@@ -78,6 +78,18 @@ TEST(InMemoryEtcdTest, LeaseKeepAliveRefreshes) {
     EXPECT_TRUE(c.Get("/n/1", &err).has_value());
 }
 
+namespace {
+template <typename Pred>
+bool WaitFor(Pred p, std::chrono::milliseconds t = std::chrono::seconds(2)) {
+    const auto deadline = std::chrono::steady_clock::now() + t;
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (p()) return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    return p();
+}
+}  // namespace
+
 TEST(InMemoryEtcdTest, WatchPrefixDeliversEvents) {
     InMemoryEtcdClient c;
     std::atomic<int> puts{0}, deletes{0};
@@ -89,9 +101,41 @@ TEST(InMemoryEtcdTest, WatchPrefixDeliversEvents) {
     c.Put("/n/1", "v", kNoLease, nullptr, &err);
     c.Put("/x/1", "v", kNoLease, nullptr, &err);  // outside prefix
     c.Delete("/n/1", &err);
+    // Delivery is asynchronous (dispatcher thread), so poll for convergence
+    // BEFORE Unwatch — otherwise the cancel could race ahead of delivery.
+    EXPECT_TRUE(WaitFor([&] { return puts.load() == 1 && deletes.load() == 1; }));
     c.Unwatch(h);
     EXPECT_EQ(puts.load(), 1);
     EXPECT_EQ(deletes.load(), 1);
+}
+
+// Phase C2 — the headline guarantee: a watch callback may re-enter the client
+// (Get / Put / Unwatch) without deadlocking, because callbacks run on the
+// dispatcher thread with the client's mutex released. Before C2 this
+// synchronous-under-lock dispatch was the A1.11 / K-4 deadlock footgun.
+TEST(InMemoryEtcdTest, CallbackMayReenterClientWithoutDeadlock) {
+    InMemoryEtcdClient c;
+    std::string err;
+    std::atomic<bool> reentered_ok{false};
+    std::atomic<int>  fired{0};
+
+    WatchHandle h = 0;
+    h = c.WatchPrefix("/n/", [&](const WatchEvent& e) {
+        if (++fired != 1) return;  // act only on the first event
+        // Re-enter the client from inside the callback — each of these would
+        // have self-deadlocked under the old synchronous-under-lock dispatch.
+        std::string e2;
+        auto got = c.Get(e.kv.key, &e2);                 // re-entrant read
+        c.Put("/n/echo", "x", kNoLease, nullptr, &e2);   // re-entrant write
+        c.Unwatch(h);                                    // cancel self
+        reentered_ok = got.has_value() && got->value == "v";
+    });
+
+    ASSERT_TRUE(c.Put("/n/1", "v", kNoLease, nullptr, &err)) << err;
+    EXPECT_TRUE(WaitFor([&] { return reentered_ok.load(); }))
+        << "callback never completed — re-entrant call deadlocked";
+    // The re-entrant Put landed, and self-Unwatch stopped further delivery.
+    EXPECT_TRUE(WaitFor([&] { return c.Get("/n/echo", &err).has_value(); }));
 }
 
 TEST(GrpcEtcdClientTest, ReportsBuildState) {

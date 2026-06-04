@@ -24,7 +24,9 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -138,11 +140,25 @@ class InMemoryEtcdClient final : public IEtcdClient {
         WatchCallback cb;
     };
 
-    // Emit `ev` to every watcher whose prefix matches `key`. Caller holds mu_.
+    // Queue `ev` for every watcher whose prefix matches, then wake the
+    // dispatcher. Caller holds mu_. Callbacks are NOT invoked here — they run
+    // on the dispatcher thread with mu_ released, so a watcher callback may
+    // freely re-enter the client (Get/Put/Unwatch/…) without deadlocking on
+    // mu_. This mirrors real etcd, where watch events are delivered
+    // asynchronously on the watch stream rather than inside the mutating RPC.
     void NotifyLocked(const WatchEvent& ev);
     // Remove all keys associated with `lease`. Caller holds mu_.
     void ExpireLeaseLocked(LeaseId lease);
     void SweeperLoop();
+    void DispatchLoop();
+
+    // One queued delivery: the target watcher (resolved by handle at dispatch
+    // time so an Unwatch between enqueue and delivery cleanly drops it) + the
+    // event payload.
+    struct PendingEvent {
+        WatchHandle handle;
+        WatchEvent  ev;
+    };
 
     mutable std::mutex                            mu_;
     Revision                                       revision_ = 0;
@@ -151,6 +167,11 @@ class InMemoryEtcdClient final : public IEtcdClient {
     std::unordered_map<WatchHandle, Watcher>      watchers_;
     std::atomic<LeaseId>     next_lease_{1};
     std::atomic<WatchHandle> next_watch_{1};
+
+    // Async watch-callback delivery (guarded by mu_, woken by dispatch_cv_).
+    std::deque<PendingEvent> dispatch_q_;
+    std::condition_variable  dispatch_cv_;
+    std::thread              dispatcher_;
 
     std::atomic<bool>        stop_{false};
     std::thread              sweeper_;

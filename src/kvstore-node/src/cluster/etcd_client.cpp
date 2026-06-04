@@ -32,21 +32,54 @@ InMemoryEtcdClient::InMemoryEtcdClient() : InMemoryEtcdClient(Options{}) {}
 
 InMemoryEtcdClient::InMemoryEtcdClient(const Options& opts)
     : sweep_interval_(opts.lease_sweep_interval) {
-    sweeper_ = std::thread([this] { SweeperLoop(); });
+    dispatcher_ = std::thread([this] { DispatchLoop(); });
+    sweeper_    = std::thread([this] { SweeperLoop(); });
 }
 
 InMemoryEtcdClient::~InMemoryEtcdClient() {
     stop_.store(true, std::memory_order_release);
+    // Stop the sweeper first (it may enqueue lease-expiry events), then wake
+    // and join the dispatcher, which drains any remaining queued events.
     if (sweeper_.joinable()) sweeper_.join();
+    {
+        std::lock_guard lk(mu_);
+        dispatch_cv_.notify_all();
+    }
+    if (dispatcher_.joinable()) dispatcher_.join();
 }
 
 void InMemoryEtcdClient::NotifyLocked(const WatchEvent& ev) {
-    // Dispatch synchronously while holding mu_. Watchers must be cheap;
-    // production use would post to a dispatcher thread (TODO(stephen)).
-    for (const auto& [_, w] : watchers_) {
+    // Enqueue the event for every matching watcher; the dispatcher thread
+    // invokes the callbacks with mu_ released (see DispatchLoop). Caller
+    // holds mu_, so we only touch dispatch_q_ here — never a user callback.
+    for (const auto& [id, w] : watchers_) {
         if (ev.kv.key.rfind(w.prefix, 0) == 0) {
-            w.cb(ev);
+            dispatch_q_.push_back(PendingEvent{id, ev});
         }
+    }
+    dispatch_cv_.notify_one();
+}
+
+void InMemoryEtcdClient::DispatchLoop() {
+    std::unique_lock lk(mu_);
+    while (true) {
+        dispatch_cv_.wait(lk, [this] {
+            return stop_.load(std::memory_order_acquire) || !dispatch_q_.empty();
+        });
+        // Drain fully before honoring stop, so no event is lost at teardown.
+        if (dispatch_q_.empty()) {
+            if (stop_.load(std::memory_order_acquire)) return;
+            continue;
+        }
+        PendingEvent item = std::move(dispatch_q_.front());
+        dispatch_q_.pop_front();
+        // Resolve the callback now: an Unwatch since enqueue cleanly drops it.
+        auto it = watchers_.find(item.handle);
+        if (it == watchers_.end()) continue;
+        WatchCallback cb = it->second.cb;  // copy keeps it alive across unlock
+        lk.unlock();
+        cb(item.ev);   // invoked WITHOUT mu_ — safe to re-enter the client
+        lk.lock();
     }
 }
 
