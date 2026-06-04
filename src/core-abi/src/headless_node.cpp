@@ -197,6 +197,12 @@ bool HeadlessNode::Init(const Options& opts, std::string* err) {
         tier_opts.dram.on_evict =
             [this](const node::tier::DramKey& k) { this->OnDramEvict(k); };
     }
+    // Phase O-4 — when the cold tier is enabled, route its kv_cold_* counters
+    // to the same Registry::Default() the pinned-tier metrics + /metrics
+    // scrape use, unless the caller already pointed it elsewhere.
+    if (tier_opts.enable_cold && !tier_opts.cold.metrics_registry) {
+        tier_opts.cold.metrics_registry = &kvcache::metrics::Registry::Default();
+    }
     tm_ = node::tier::TierManager::Create(tier_opts, err);
     if (!tm_) return false;
 

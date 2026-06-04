@@ -4,6 +4,7 @@
 #include "tier/rest_cold_tier.h"          // B3  — native-rest backend
 #include "tier/compressing_cold_tier.h"   // B3.1 — compression middleware
 #include "tier/encrypting_cold_tier.h"    // B3.2 — encryption middleware
+#include "tier/metrics_cold_tier.h"       // O-4  — observability middleware
 #include "tier/block_codec.h"
 
 #include <cerrno>
@@ -208,6 +209,13 @@ std::unique_ptr<IColdTier> CreateColdTier(const ColdTierOptions& opts, std::stri
         auto codec = MakeCodec(opts.compression.codec, opts.compression.level, err);
         if (!codec) return nullptr;  // unknown / uncompiled codec — *err set
         tier = CompressingColdTier::Create(std::move(tier), std::move(codec), err);
+        if (!tier) return nullptr;
+    }
+
+    // O-4 — optional observability, wrapped OUTERMOST so its counters report
+    // logical API-level ops (above compression/encryption byte transforms).
+    if (opts.metrics_registry) {
+        tier = MetricsColdTier::Create(std::move(tier), *opts.metrics_registry, err);
         if (!tier) return nullptr;
     }
     return tier;

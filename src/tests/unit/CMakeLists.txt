@@ -32,6 +32,7 @@ set(NODE_TIER_SRCS
     ${KVCACHE_NODE_SRC}/tier/block_codec.cpp           # B3.1 — codec seam
     ${KVCACHE_NODE_SRC}/tier/compressing_cold_tier.cpp # B3.1 — compression middleware
     ${KVCACHE_NODE_SRC}/tier/encrypting_cold_tier.cpp  # B3.2 — encryption middleware (OpenSSL)
+    ${KVCACHE_NODE_SRC}/tier/metrics_cold_tier.cpp     # O-4  — observability middleware
     ${KVCACHE_NODE_SRC}/tier/tier_manager.cpp
 )
 
@@ -115,7 +116,8 @@ kvcache_add_test(test_tier_manager     tier/tier_manager_test.cpp       ${NODE_T
 kvcache_add_test(test_rest_cold_tier   tier/rest_cold_tier_test.cpp     ${NODE_TIER_SRCS})
 kvcache_add_test(test_compressing_cold_tier tier/compressing_cold_tier_test.cpp ${NODE_TIER_SRCS})
 kvcache_add_test(test_encrypting_cold_tier  tier/encrypting_cold_tier_test.cpp  ${NODE_TIER_SRCS})
-foreach(_tier_t test_pinned_tier test_dram_tier test_nvme_tier test_cold_tier test_tier_manager test_rest_cold_tier test_compressing_cold_tier test_encrypting_cold_tier)
+kvcache_add_test(test_metrics_cold_tier     tier/metrics_cold_tier_test.cpp     ${NODE_TIER_SRCS})
+foreach(_tier_t test_pinned_tier test_dram_tier test_nvme_tier test_cold_tier test_tier_manager test_rest_cold_tier test_compressing_cold_tier test_encrypting_cold_tier test_metrics_cold_tier)
     target_link_libraries(${_tier_t} PRIVATE CURL::libcurl)
     # B3.1 — block_codec.cpp pulls libzstd when the codec is enabled.
     if(KVCACHE_ENABLE_ZSTD)

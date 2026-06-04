@@ -36,6 +36,8 @@
 
 #include "tier/dram_tier.h"  // DramKey reused as content key
 
+namespace kvcache::metrics { class Registry; }  // Phase O-4 — cold metrics
+
 namespace kvcache::node::tier {
 
 class IColdTier {
@@ -117,6 +119,10 @@ struct ColdTierOptions {
         bool                 enabled = false;
         std::vector<uint8_t> key;  // 32 bytes when enabled
     } encryption;
+    // Observability (Phase O-4). When non-null, the built tier is wrapped
+    // OUTERMOST in a MetricsColdTier that records kv_cold_* counters to this
+    // registry. nullptr = no metrics (zero overhead).
+    metrics::Registry* metrics_registry = nullptr;
 };
 std::unique_ptr<IColdTier> CreateColdTier(const ColdTierOptions& opts, std::string* err);
 
