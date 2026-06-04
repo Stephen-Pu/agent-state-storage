@@ -1,13 +1,16 @@
 // Package server implements the gRPC ControlPlane service defined in
 // src/core/proto/cp.proto.
 //
-// Phase A-6 (LLD §4.1 / §5.1) — first cut: Register + Heartbeat are
-// real (drive the existing membership.Registry → etcd path); Sync is
-// stubbed at Unimplemented for now since its bidi-stream semantics
-// touch quota + bloom-fanout subsystems that haven't been scaffolded
-// yet (CP-internal/quota, CP-internal/routing). The service can be
-// extended in place — the wiring + lifecycle is the part that didn't
-// exist before.
+// Phase A-6 (LLD §4.1 / §5.1) — Register + Heartbeat are real (drive the
+// existing membership.Registry → etcd path); Sync stays Unimplemented by
+// design. The original §4.1 plan pushed quota / routing / bloom over Sync's
+// bidi stream, but the implementation moved those to an etcd-watch
+// architecture (operator EtcdTenantPublisher → /kvcache/tenants/, leader
+// ViewPublisher/SketchAggregator → /kvcache/cluster/*, node-side
+// NodeDirectory/TenantRegistry watchers). Nodes have no Sync client; a
+// caller hitting Sync gets a clean Unimplemented and falls back to direct
+// etcd-Watch — which is what kvstore-node does anyway. See internal/routing,
+// internal/quota, internal/config doc.go for where each subsystem lives.
 //
 // Lifecycle:
 //   - main.go constructs one Server per process and registers it with

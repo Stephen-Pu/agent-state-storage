@@ -3,7 +3,10 @@
 // One TenantRegistry per node. Owns the canonical map from tenant_id
 // (16-byte UUID) → TenantConfig. The registry is updated:
 //   * At node bring-up, from the local RocksDB cache (TenantQuotaSnapshot).
-//   * At runtime, by the CP via the Sync stream (LLD §4.1).
+//   * At runtime, by watching the etcd prefix /kvcache/tenants/<cluster>/
+//     that the operator's EtcdTenantPublisher (Phase H-4) writes. (The
+//     original LLD §4.1 design pushed quota over the CP Sync stream; that
+//     was superseded by the etcd-watch path.)
 //
 // All quota / priority lookups in hot path go through this registry's
 // O(1) hash; for cross-subsystem propagation we hash the 16-byte tenant_id
