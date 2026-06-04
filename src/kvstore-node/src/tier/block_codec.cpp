@@ -42,6 +42,20 @@ bool ZstdCodec::Compress(const uint8_t* in, std::size_t n,
 bool ZstdCodec::Decompress(const uint8_t* in, std::size_t n,
                            std::size_t orig_size,
                            std::vector<uint8_t>* out, std::string* err) {
+    // Defensive: `orig_size` comes from the cold-tier blob header, which can
+    // bit-rot. Cross-check it against the size the zstd frame itself declares
+    // BEFORE allocating — otherwise a corrupt/huge orig_size would drive an
+    // unbounded `out->resize` (OOM / crash) before ZSTD_decompress ever runs.
+    const unsigned long long fcs = ZSTD_getFrameContentSize(in, n);
+    if (fcs == ZSTD_CONTENTSIZE_ERROR) {
+        if (err) *err = "zstd decompress: not a valid zstd frame";
+        return false;
+    }
+    if (fcs == ZSTD_CONTENTSIZE_UNKNOWN || fcs != orig_size) {
+        if (err) *err = "zstd decompress: frame content size mismatch "
+                        "(corrupt header?)";
+        return false;
+    }
     out->resize(orig_size);
     const std::size_t r = ZSTD_decompress(out->data(), orig_size, in, n);
     if (ZSTD_isError(r)) {

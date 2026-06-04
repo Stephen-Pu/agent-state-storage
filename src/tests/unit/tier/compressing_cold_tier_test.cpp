@@ -273,4 +273,52 @@ TEST(CompressingColdTierTest, ZstdRoundTripsIncompressibleData) {
     ASSERT_TRUE(t->Get(Key(2), &out, &err)) << err;
     EXPECT_EQ(out, data);
 }
+
+// C3 — a bit-rotted orig_size in the header must be rejected cleanly, NOT
+// drive an unbounded out->resize (OOM/crash) before decompress. Guarded by
+// the ZSTD_getFrameContentSize cross-check.
+TEST(CompressingColdTierTest, CorruptOrigSizeRejectedWithoutOom) {
+    std::string err;
+    auto codec = MakeCodec("zstd", 3, &err);
+    ASSERT_NE(codec, nullptr) << err;
+    FakeColdTier* fake = nullptr;
+    auto t = MakeTier(&fake, std::move(codec));
+
+    std::vector<uint8_t> data(4096, 0x7C);
+    ASSERT_TRUE(t->Put(Key(1), data.data(), data.size(), &err)) << err;
+
+    // Flip the 8-byte LE orig_size field (header offset 8..16) to ~16 EiB.
+    const std::string* raw_const = fake->Raw(Key(1));
+    ASSERT_NE(raw_const, nullptr);
+    std::string blob = *raw_const;
+    for (int i = 8; i < 16; ++i) blob[i] = static_cast<char>(0xFF);
+    ASSERT_TRUE(fake->Put(Key(1),
+        reinterpret_cast<const uint8_t*>(blob.data()), blob.size(), &err));
+
+    std::vector<uint8_t> out;
+    EXPECT_FALSE(t->Get(Key(1), &out, &err));  // must not OOM/crash
+    EXPECT_FALSE(err.empty());
+}
+
+// C3 — a truncated zstd payload (header intact) fails the decompress cleanly.
+TEST(CompressingColdTierTest, TruncatedZstdPayloadFails) {
+    std::string err;
+    auto codec = MakeCodec("zstd", 3, &err);
+    ASSERT_NE(codec, nullptr) << err;
+    FakeColdTier* fake = nullptr;
+    auto t = MakeTier(&fake, std::move(codec));
+
+    std::vector<uint8_t> data(4096, 0x33);
+    ASSERT_TRUE(t->Put(Key(1), data.data(), data.size(), &err)) << err;
+
+    std::string blob = *fake->Raw(Key(1));
+    ASSERT_GT(blob.size(), CompressingColdTier::kHeaderSize + 4);
+    blob.resize(CompressingColdTier::kHeaderSize + 4);  // keep header, chop frame
+    ASSERT_TRUE(fake->Put(Key(1),
+        reinterpret_cast<const uint8_t*>(blob.data()), blob.size(), &err));
+
+    std::vector<uint8_t> out;
+    EXPECT_FALSE(t->Get(Key(1), &out, &err));
+    EXPECT_FALSE(err.empty());
+}
 #endif  // KVCACHE_HAVE_ZSTD

@@ -175,6 +175,34 @@ TEST(EncryptingColdTierTest, WrongKeyFailsAuth) {
     EXPECT_FALSE(err.empty());
 }
 
+TEST(EncryptingColdTierTest, ShortBlobBelowHeaderFails) {
+    FakeColdTier* fake = nullptr;
+    auto t = MakeTier(&fake, Key32(0xC1));
+    ASSERT_NE(t, nullptr);
+    std::string err;
+    // Inject a blob shorter than the 36-byte header directly into the backend.
+    std::vector<uint8_t> tiny{'K', 'V', 'E', '1', 1};
+    ASSERT_TRUE(fake->Put(Key(1), tiny.data(), tiny.size(), &err));
+    std::vector<uint8_t> out;
+    EXPECT_FALSE(t->Get(Key(1), &out, &err));
+    EXPECT_FALSE(err.empty());
+}
+
+TEST(EncryptingColdTierTest, UnknownAlgIdFails) {
+    FakeColdTier* fake = nullptr;
+    auto t = MakeTier(&fake, Key32(0xC2));
+    ASSERT_NE(t, nullptr);
+    std::string err;
+    // Valid magic + header length, but an alg id this build doesn't know.
+    std::vector<uint8_t> blob(EncryptingColdTier::kHeaderSize + 8, 0);
+    blob[0] = 'K'; blob[1] = 'V'; blob[2] = 'E'; blob[3] = '1';
+    blob[4] = 0x09;  // unknown alg
+    ASSERT_TRUE(fake->Put(Key(1), blob.data(), blob.size(), &err));
+    std::vector<uint8_t> out;
+    EXPECT_FALSE(t->Get(Key(1), &out, &err));
+    EXPECT_FALSE(err.empty());
+}
+
 TEST(EncryptingColdTierTest, GetMissingDelegatesCleanly) {
     FakeColdTier* fake = nullptr;
     auto t = MakeTier(&fake, Key32(0x88));

@@ -49,6 +49,11 @@ class FakeObjectStore final : public IHttpTransport {
             r.transport_err = "injected transport failure";
             return r;
         }
+        if (force_status != 0) {  // C3 — exercise non-2xx server responses
+            r.status = force_status;
+            r.body = "forced error body";
+            return r;
+        }
         if (method == "PUT") {
             store_[url] = std::string(reinterpret_cast<const char*>(body), n);
             r.status = 200;
@@ -77,6 +82,7 @@ class FakeObjectStore final : public IHttpTransport {
     }
 
     bool             fail_transport = false;
+    int              force_status = 0;  // C3 — when set, every request returns it
     int              calls = 0;
     std::string      last_method, last_url;
     std::vector<std::string> last_headers;
@@ -209,6 +215,31 @@ TEST(RestColdTierTest, TransportErrorSurfacesOnPutAndGet) {
     EXPECT_FALSE(t->Get(Key(1), &out, &err));
     EXPECT_FALSE(err.empty());
     EXPECT_FALSE(t->Exists(Key(1)));  // transport error → not present
+}
+
+// C3 — a non-2xx, non-404 HTTP status is a hard error on every verb (NOT a
+// silent miss/success). 500 on Get must not be mistaken for a cache miss.
+TEST(RestColdTierTest, Non2xxStatusIsErrorNotMiss) {
+    auto fake = std::make_shared<FakeObjectStore>();
+    fake->force_status = 500;
+    auto t = MakeTier(fake);
+    std::string err;
+
+    std::vector<uint8_t> out;
+    EXPECT_FALSE(t->Get(Key(1), &out, &err));
+    EXPECT_FALSE(err.empty()) << "500 on Get must surface as an error, not a clean miss";
+
+    err.clear();
+    std::vector<uint8_t> data{1, 2, 3};
+    EXPECT_FALSE(t->Put(Key(1), data.data(), data.size(), &err));
+    EXPECT_FALSE(err.empty());
+
+    err.clear();
+    EXPECT_FALSE(t->Delete(Key(1), &err));  // 500 != 404 → not idempotent-ok
+    EXPECT_FALSE(err.empty());
+
+    // Exists swallows everything to bool: a 500 is "not present".
+    EXPECT_FALSE(t->Exists(Key(1)));
 }
 
 // ---- factory wiring -------------------------------------------------------
