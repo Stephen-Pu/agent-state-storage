@@ -10,7 +10,8 @@ import pathlib
 import sys
 
 _adapters_dir = pathlib.Path(__file__).resolve().parent
-for sub in ("core", "vllm", "sglang", "aibrix", "dynamo"):
+for sub in ("core", "vllm", "sglang", "aibrix", "dynamo",
+            "lmdeploy", "tgi", "mii"):
     p = _adapters_dir / sub
     if p.is_dir() and str(p) not in sys.path:
         sys.path.insert(0, str(p))

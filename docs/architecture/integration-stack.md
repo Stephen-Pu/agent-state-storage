@@ -16,7 +16,7 @@ flowchart TB
         WL3["TRT-LLM"]
         WL4["AIBrix"]
         WL5["NVIDIA Dynamo<br/>(shipped — KVBM adapter)"]
-        WL6["LMDeploy · TGI<br/>DeepSpeed-MII<br/>(Phase 2)"]
+        WL6["LMDeploy · TGI<br/>DeepSpeed-MII<br/>(shipped — cffi adapters)"]
     end
 
     %% =========================================================
@@ -100,8 +100,7 @@ flowchart TB
     classDef hwStyle fill:#fafafa,stroke:#424242,color:#000
     classDef futureStyle fill:#fce4ec,stroke:#880e4f,stroke-dasharray: 5 5,color:#000
 
-    class WL,WL1,WL2,WL3,WL4,WL5 workload
-    class WL6 futureStyle
+    class WL,WL1,WL2,WL3,WL4,WL5,WL6 workload
     class API,A1,A2,A3 apiStyle
     class A4 futureStyle
     class CORE,V coreStyle
@@ -119,7 +118,7 @@ flowchart TB
 ### Workflow layer (top)
 - **P0 engines (MVP)**: vLLM, SGLang, TRT-LLM, AIBrix — each ships an adapter that calls the Core ABI
 - **P1 engine (shipped)**: NVIDIA Dynamo — natural fit because Dynamo already uses NIXL; the `kvcache_dynamo` adapter maps KVBM's `match`/`offload`/`onboard` onto the Core ABI
-- **Phase 2**: LMDeploy, TGI, DeepSpeed-MII — based on customer demand
+- **Phase 2 (shipped)**: LMDeploy (TurboMind block cache), TGI (prefix cache), DeepSpeed-MII (FastGen) — each a `cffi` shell mapping the engine's KV vocabulary onto the Core ABI
 
 ### API layer
 - **C ABI** is the single source of truth; all other bindings are thin shells
