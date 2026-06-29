@@ -246,13 +246,19 @@ KV_API int kv_kvtensor_encode(const float* data, uint32_t n_tokens,
                               int32_t delta, uint8_t* out, size_t out_cap,
                               size_t* out_len) {
     if (!out_len) return KV_E_INVAL;
+    // Validate caller args up front so we can distinguish KV_E_INVAL (bad
+    // input) from KV_E_INTERNAL (codec failed on valid input), per the
+    // header contract.
+    if ((bits != 8 && bits != 4) || n_tokens == 0 || elems_per_token == 0 ||
+        !data) {
+        return KV_E_INVAL;
+    }
     kvcache::codec::KvShape shape{n_tokens, elems_per_token};
     kvcache::codec::KvCodecParams params{static_cast<int>(bits), delta != 0};
     std::vector<uint8_t> blob;
     std::string err;
     if (!kvcache::codec::EncodeKvTensor(data, shape, params, &blob, &err)) {
-        // Bad bits / shape / null data → invalid arg; anything else internal.
-        return KV_E_INVAL;
+        return KV_E_INTERNAL;  // args were valid → codec-internal failure
     }
     *out_len = blob.size();
     if (!out || out_cap < blob.size()) {
