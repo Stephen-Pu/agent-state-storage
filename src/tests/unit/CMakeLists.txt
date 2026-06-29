@@ -129,6 +129,14 @@ foreach(_tier_t test_pinned_tier test_dram_tier test_nvme_tier test_cold_tier te
     endif()
 endforeach()
 
+# KVZ-1 — KvTensorCodec (KV-tensor compression). Standalone; the zstd
+# entropy stage is gated, so the test links libzstd only when enabled.
+kvcache_add_test(test_kv_tensor_codec  codec/kv_tensor_codec_test.cpp
+                 ${KVCACHE_NODE_SRC}/codec/kv_tensor_codec.cpp)
+if(KVCACHE_ENABLE_ZSTD)
+    target_link_libraries(test_kv_tensor_codec PRIVATE PkgConfig::ZSTD)
+endif()
+
 # NODE_INGEST_SRCS contains seal.cpp which depends on meta + prefix, so the
 # ingest-side tests all need meta + prefix sources to link cleanly.
 kvcache_add_test(test_mutable_buffer   ingest/mutable_buffer_test.cpp

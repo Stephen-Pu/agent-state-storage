@@ -15,6 +15,8 @@ set(NODE_CORE_SRCS
     src/tier/compressing_cold_tier.cpp
     src/tier/encrypting_cold_tier.cpp
     src/tier/metrics_cold_tier.cpp
+    # codec
+    src/codec/kv_tensor_codec.cpp
     # prefix
     src/prefix/art_index.cpp
     src/prefix/epoch.cpp
