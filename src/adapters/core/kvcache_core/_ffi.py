@@ -87,6 +87,13 @@ int kv_seal(kv_ctx_t*, kv_handle_t handle,
             const uint32_t* tokens, size_t n_tokens);
 int kv_release(kv_ctx_t*, kv_handle_t handle);
 
+int kv_kvtensor_encode(const float* data, uint32_t n_tokens,
+                       uint32_t elems_per_token, int32_t bits, int32_t delta,
+                       uint8_t* out, size_t out_cap, size_t* out_len);
+int kv_kvtensor_decode(const uint8_t* blob, size_t blob_len,
+                       float* out, size_t out_cap_elems,
+                       uint32_t* out_n_tokens, uint32_t* out_elems_per_token);
+
 const char* kv_status_str(int status);
 """
 )

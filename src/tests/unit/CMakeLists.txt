@@ -253,6 +253,10 @@ kvcache_add_test(test_g6_alert_thresholds
                   abi/g6_alert_thresholds_test.cpp)
 target_link_libraries(test_g6_alert_thresholds PRIVATE kvcache)
 
+# Phase KVZ-2 — KV-tensor codec exposed through the C ABI.
+kvcache_add_test(test_kvtensor_abi abi/kvtensor_abi_test.cpp)
+target_link_libraries(test_kvtensor_abi PRIVATE kvcache)
+
 # Phase ABI-1 — BuildCtxOptions is pure (no HeadlessNode singleton), so the
 # test compiles the TU directly instead of linking the kvcache dylib. Needs
 # the core-abi + kvstore-node src include paths for ctx_options.h /

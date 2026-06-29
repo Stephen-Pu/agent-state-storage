@@ -194,6 +194,46 @@ class KVCacheConnector:
         if rc != 0:
             raise KVCacheError("kv_release", rc)
 
+    # ---------------------------------------------------- KV-tensor codec (KVZ)
+
+    def compress_kv(self, values: Sequence[float], n_tokens: int,
+                    elems_per_token: int, *, bits: int = 8,
+                    delta: bool = True) -> bytes:
+        """Compress fp32 KV laid out [n_tokens][elems_per_token] (a flat float
+        sequence) via the CacheGen-class codec; returns the blob. Lossy:
+        int8/int4 quantization (``bits``) + token-axis DPCM (``delta``)."""
+        if len(values) != n_tokens * elems_per_token:
+            raise ValueError("len(values) != n_tokens * elems_per_token")
+        data = self._ffi.new("float[]", [float(x) for x in values])
+        need = self._ffi.new("size_t*")
+        d = 1 if delta else 0
+        rc = self._lib.kv_kvtensor_encode(
+            data, n_tokens, elems_per_token, bits, d, self._ffi.NULL, 0, need)
+        if rc != 0:
+            raise KVCacheError("kv_kvtensor_encode(size)", rc)
+        out = self._ffi.new("uint8_t[]", need[0])
+        rc = self._lib.kv_kvtensor_encode(
+            data, n_tokens, elems_per_token, bits, d, out, need[0], need)
+        if rc != 0:
+            raise KVCacheError("kv_kvtensor_encode", rc)
+        return bytes(self._ffi.buffer(out, need[0]))
+
+    def decompress_kv(self, blob: bytes):
+        """Decode a ``compress_kv`` blob → (list[float], (n_tokens, elems)).
+        Lossy reconstruction (within the per-token quantization step)."""
+        buf = self._ffi.from_buffer("uint8_t[]", blob)
+        nt = self._ffi.new("uint32_t*")
+        ne = self._ffi.new("uint32_t*")
+        rc = self._lib.kv_kvtensor_decode(buf, len(blob), self._ffi.NULL, 0, nt, ne)
+        if rc != 0:
+            raise KVCacheError("kv_kvtensor_decode(shape)", rc)
+        total = nt[0] * ne[0]
+        out = self._ffi.new("float[]", total)
+        rc = self._lib.kv_kvtensor_decode(buf, len(blob), out, total, nt, ne)
+        if rc != 0:
+            raise KVCacheError("kv_kvtensor_decode", rc)
+        return [out[i] for i in range(total)], (int(nt[0]), int(ne[0]))
+
     # ------------------------------------------------------------------ misc
 
     def close(self) -> None:

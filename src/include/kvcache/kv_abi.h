@@ -150,6 +150,35 @@ int kv_fetch(kv_ctx_t* ctx,
  * trip. Returns KV_OK on success; KV_E_INVAL on bad args.            */
 int kv_metrics_scrape(char* buf, size_t cap, size_t* out_len);
 
+/* ------------------------------------------------------------------------- */
+/* KV-tensor compression — CacheGen-class lossy codec (Phase KVZ).           */
+/*                                                                           */
+/* Operates on fp32 KV laid out row-major [n_tokens][elems_per_token]. The   */
+/* pipeline is closed-loop DPCM along the token axis + per-token symmetric   */
+/* quantization (int8/int4) + optional zstd entropy coding. Reconstruction   */
+/* is approximate (lossy), bounded by the per-token quantization step.       */
+/* These are stateless free functions — no kv_ctx_t needed.                  */
+/* ------------------------------------------------------------------------- */
+
+/* Encode `data` into `out`. `bits` is 8 or 4 (the rate-distortion knob);
+ * `delta`!=0 enables token-axis DPCM. Writes at most `out_cap` bytes and sets
+ * *out_len to the full blob length. Pass out=NULL, out_cap=0 to size first.
+ * Returns KV_OK; KV_E_NOMEM if out_cap < *out_len (blob NOT written);
+ * KV_E_INVAL on bad args; KV_E_INTERNAL on codec failure. */
+int kv_kvtensor_encode(const float* data, uint32_t n_tokens,
+                       uint32_t elems_per_token, int32_t bits, int32_t delta,
+                       uint8_t* out, size_t out_cap, size_t* out_len);
+
+/* Decode a blob from kv_kvtensor_encode into `out` (fp32, up to
+ * `out_cap_elems` floats). Fills *out_n_tokens / *out_elems_per_token with the
+ * decoded shape. Pass out=NULL to read the shape only (cheap header peek,
+ * returns KV_OK). Returns KV_OK; KV_E_NOMEM if out is non-NULL but
+ * out_cap_elems < n_tokens*elems_per_token (shape still filled);
+ * KV_E_INVAL on a malformed blob. */
+int kv_kvtensor_decode(const uint8_t* blob, size_t blob_len,
+                       float* out, size_t out_cap_elems,
+                       uint32_t* out_n_tokens, uint32_t* out_elems_per_token);
+
 /* Phase S-3 — same as kv_fetch but lets the caller pick the
  * PriorityScheduler class. Defaults via kv_fetch are P1 (the engine
  * data path). P0 callers preempt P1/P2 under contention; P2 callers

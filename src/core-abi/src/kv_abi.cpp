@@ -8,7 +8,9 @@
 
 #include <cstring>
 #include <string>
+#include <vector>
 
+#include "codec/kv_tensor_codec.h"  // Phase KVZ — KV-tensor compression
 #include "ctx_options.h"  // Phase ABI-1 — BuildCtxOptions
 #include "hashing.h"      // Phase W-2 — canonical kvcache::Fnv1a64
 #include "headless_node.h"
@@ -234,6 +236,60 @@ KV_API int kv_metrics_scrape(char* buf, size_t cap, size_t* out_len) {
         std::memcpy(buf, body.data(), copy);
         buf[copy] = '\0';
     }
+    return KV_OK;
+}
+
+// Phase KVZ — KV-tensor compression (stateless; delegates to
+// kvcache::codec). Two-pass sizing mirrors kv_metrics_scrape.
+KV_API int kv_kvtensor_encode(const float* data, uint32_t n_tokens,
+                              uint32_t elems_per_token, int32_t bits,
+                              int32_t delta, uint8_t* out, size_t out_cap,
+                              size_t* out_len) {
+    if (!out_len) return KV_E_INVAL;
+    kvcache::codec::KvShape shape{n_tokens, elems_per_token};
+    kvcache::codec::KvCodecParams params{static_cast<int>(bits), delta != 0};
+    std::vector<uint8_t> blob;
+    std::string err;
+    if (!kvcache::codec::EncodeKvTensor(data, shape, params, &blob, &err)) {
+        // Bad bits / shape / null data → invalid arg; anything else internal.
+        return KV_E_INVAL;
+    }
+    *out_len = blob.size();
+    if (!out || out_cap < blob.size()) {
+        return out ? KV_E_NOMEM : KV_OK;  // out==NULL → sizing probe
+    }
+    std::memcpy(out, blob.data(), blob.size());
+    return KV_OK;
+}
+
+KV_API int kv_kvtensor_decode(const uint8_t* blob, size_t blob_len,
+                              float* out, size_t out_cap_elems,
+                              uint32_t* out_n_tokens,
+                              uint32_t* out_elems_per_token) {
+    if (!blob) return KV_E_INVAL;
+    // Cheap shape peek for out==NULL (matches DecodeKvTensor's header layout:
+    // magic[4] ver bits flags rsvd, then n_tokens@8, elems@12, LE u32).
+    if (!out) {
+        if (blob_len < 16 || std::memcmp(blob, "KVT1", 4) != 0) return KV_E_INVAL;
+        auto rd = [&](size_t o) {
+            uint32_t v = 0;
+            for (int i = 0; i < 4; ++i) v |= static_cast<uint32_t>(blob[o + i]) << (8 * i);
+            return v;
+        };
+        if (out_n_tokens)        *out_n_tokens = rd(8);
+        if (out_elems_per_token) *out_elems_per_token = rd(12);
+        return KV_OK;
+    }
+    std::vector<float> dec;
+    kvcache::codec::KvShape shape{};
+    std::string err;
+    if (!kvcache::codec::DecodeKvTensor(blob, blob_len, &dec, &shape, &err)) {
+        return KV_E_INVAL;
+    }
+    if (out_n_tokens)        *out_n_tokens = shape.n_tokens;
+    if (out_elems_per_token) *out_elems_per_token = shape.elems_per_token;
+    if (out_cap_elems < dec.size()) return KV_E_NOMEM;
+    std::memcpy(out, dec.data(), dec.size() * sizeof(float));
     return KV_OK;
 }
 
