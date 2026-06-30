@@ -15,6 +15,7 @@ LLD reference: §6.1.4 (engine adapter strategy).
 
 from __future__ import annotations
 
+import array
 from typing import Optional, Sequence, Set
 
 from kvcache_core import KVCacheConnector
@@ -38,11 +39,21 @@ class SGLangKVBackend:
     CHUNK_TOKENS = 16
 
     def __init__(self, tenant_id: str, model_id: str,
-                 bytes_per_token: int) -> None:
+                 bytes_per_token: int, *, compress: bool = False,
+                 compress_bits: int = 8) -> None:
         if bytes_per_token <= 0:
             raise ValueError("bytes_per_token must be positive")
+        # KVZ-3 — optional lossy KV-tensor compression on the store/retrieve
+        # path. The KV bytes are interpreted as fp32 [tokens][elems], so the
+        # per-token byte size must be a whole number of floats.
+        if compress and bytes_per_token % 4 != 0:
+            raise ValueError("compress requires bytes_per_token to be a "
+                             "multiple of 4 (fp32 elements)")
         self._cx = KVCacheConnector(tenant_id=tenant_id, model_id=model_id)
         self._bytes_per_token = bytes_per_token
+        self._compress = compress
+        self._compress_bits = compress_bits
+        self._elems_per_token = bytes_per_token // 4
         self._closed = False
 
     # ----- SGLang-style methods --------------------------------------------
@@ -77,14 +88,31 @@ class SGLangKVBackend:
             raise ValueError("tokens must be non-empty")
         if not kv_bytes:
             raise ValueError("kv_bytes must be non-empty")
+        payload = self._maybe_compress(tokens, kv_bytes)
         locator = self._cx.make_locator(tokens)
-        rsv = self._cx.reserve(locator, len(kv_bytes))
-        if rsv.slot_bytes < len(kv_bytes):
+        rsv = self._cx.reserve(locator, len(payload))
+        if rsv.slot_bytes < len(payload):
             raise RuntimeError(
-                f"reserved slot too small: {rsv.slot_bytes} < {len(kv_bytes)}")
-        self._cx.write_into_slot(rsv.slot_addr, kv_bytes)
-        self._cx.publish(rsv.handle, watermark=len(kv_bytes))
+                f"reserved slot too small: {rsv.slot_bytes} < {len(payload)}")
+        self._cx.write_into_slot(rsv.slot_addr, payload)
+        self._cx.publish(rsv.handle, watermark=len(payload))
         self._cx.seal(rsv.handle, tokens)
+
+    def _maybe_compress(self, tokens: Sequence[int], kv_bytes: bytes) -> bytes:
+        """Return the bytes to actually store. With compression on, the KV is
+        interpreted as fp32 [len(tokens)][elems_per_token] and run through the
+        CacheGen-class codec (lossy); otherwise stored verbatim."""
+        if not self._compress:
+            return kv_bytes
+        n_tokens = len(tokens)
+        if len(kv_bytes) != n_tokens * self._bytes_per_token:
+            raise ValueError(
+                f"kv_bytes {len(kv_bytes)} != tokens*bytes_per_token "
+                f"{n_tokens * self._bytes_per_token} (needed for compression)")
+        floats = array.array("f")
+        floats.frombytes(kv_bytes)
+        return self._cx.compress_kv(floats, n_tokens, self._elems_per_token,
+                                    bits=self._compress_bits)
 
     def retrieve(self, tokens: Sequence[int]) -> Optional[bytes]:
         """Pull cached bytes for the LPM-matched prefix of ``tokens``.
@@ -93,11 +121,25 @@ class SGLangKVBackend:
         ``matched_tokens * bytes_per_token`` bytes — possibly less than
         what was originally stored if ``tokens`` represents a longer
         sequence than the cached one, or vice versa.
+
+        With compression on the stored payload is a variable-size codec
+        blob; we size the fetch via ``stored_bytes(handle)``, decode it,
+        then slice the reconstructed KV to the matched prefix.
         """
         hit = self._cx.lookup(tokens)
         if hit is None:
             return None
-        n_bytes = int(hit.matched_tokens) * self._bytes_per_token
+        matched = int(hit.matched_tokens)
+        if self._compress:
+            stored = self._cx.stored_bytes(hit.handle)
+            buf = bytearray(stored)
+            cid = self._cx.fetch(hit.handle, buf)
+            self._cx.wait(cid)
+            self._cx.release(hit.handle)
+            floats, _shape = self._cx.decompress_kv(bytes(buf))
+            out = array.array("f", floats).tobytes()
+            return out[:matched * self._bytes_per_token]
+        n_bytes = matched * self._bytes_per_token
         buf = bytearray(n_bytes)
         cid = self._cx.fetch(hit.handle, buf)
         self._cx.wait(cid)

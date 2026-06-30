@@ -94,6 +94,8 @@ int kv_kvtensor_decode(const uint8_t* blob, size_t blob_len,
                        float* out, size_t out_cap_elems,
                        uint32_t* out_n_tokens, uint32_t* out_elems_per_token);
 
+int kv_lookup_stored_bytes(kv_ctx_t* ctx, kv_handle_t handle, size_t* out_bytes);
+
 const char* kv_status_str(int status);
 """
 )

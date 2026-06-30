@@ -257,6 +257,10 @@ target_link_libraries(test_g6_alert_thresholds PRIVATE kvcache)
 kvcache_add_test(test_kvtensor_abi abi/kvtensor_abi_test.cpp)
 target_link_libraries(test_kvtensor_abi PRIVATE kvcache)
 
+# Phase KVZ-3 — kv_lookup_stored_bytes.
+kvcache_add_test(test_stored_bytes abi/stored_bytes_test.cpp)
+target_link_libraries(test_stored_bytes PRIVATE kvcache)
+
 # Phase ABI-1 — BuildCtxOptions is pure (no HeadlessNode singleton), so the
 # test compiles the TU directly instead of linking the kvcache dylib. Needs
 # the core-abi + kvstore-node src include paths for ctx_options.h /

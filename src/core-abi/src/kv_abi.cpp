@@ -299,4 +299,13 @@ KV_API int kv_kvtensor_decode(const uint8_t* blob, size_t blob_len,
     return KV_OK;
 }
 
+KV_API int kv_lookup_stored_bytes(kv_ctx_t* ctx, kv_handle_t handle,
+                                  size_t* out_bytes) {
+    if (!ctx || !ctx->node || !out_bytes) return KV_E_INVAL;
+    uint64_t n = 0;
+    const int rc = ctx->node->HandleStoredBytes(handle, &n);
+    if (rc == KV_OK) *out_bytes = static_cast<size_t>(n);
+    return rc;
+}
+
 }  // extern "C"

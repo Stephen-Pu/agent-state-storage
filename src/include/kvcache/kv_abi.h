@@ -179,6 +179,13 @@ int kv_kvtensor_decode(const uint8_t* blob, size_t blob_len,
                        float* out, size_t out_cap_elems,
                        uint32_t* out_n_tokens, uint32_t* out_elems_per_token);
 
+/* Total stored byte length of a read handle's cached chunk (Phase KVZ-3).
+ * `handle` must be a handle returned by kv_lookup. Lets a caller size a
+ * kv_fetch buffer exactly when the stored payload is variable-size (e.g.
+ * KV-tensor-compressed via the codec above). Returns KV_OK; KV_E_NOT_FOUND
+ * for an unknown handle; KV_E_INVAL on bad args / non-read handle. */
+int kv_lookup_stored_bytes(kv_ctx_t* ctx, kv_handle_t handle, size_t* out_bytes);
+
 /* Phase S-3 — same as kv_fetch but lets the caller pick the
  * PriorityScheduler class. Defaults via kv_fetch are P1 (the engine
  * data path). P0 callers preempt P1/P2 under contention; P2 callers

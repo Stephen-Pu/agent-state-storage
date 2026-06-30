@@ -88,6 +88,11 @@ class HeadlessNode {
                kv_handle_t*  out_handle,
                uint32_t*     out_matched_tokens);
 
+    // Phase KVZ-3 — total stored bytes for a read handle's cached chunk
+    // (leaf->bytes_total). Lets a caller size a fetch buffer exactly when
+    // the payload is a variable-size blob (e.g. KV-tensor-compressed).
+    int HandleStoredBytes(kv_handle_t handle, uint64_t* out_bytes) const;
+
     // Phase Q-5 — Reserve records tenant_hash + model_hash on the
     // HandleState so the matching Seal computes the SAME namespace
     // fingerprint and lands on the right ART subtree.

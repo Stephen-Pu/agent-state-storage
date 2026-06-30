@@ -337,6 +337,20 @@ int HeadlessNode::Lookup(const char* /*tenant_id*/,
     return KV_OK;
 }
 
+// Phase KVZ-3 — stored byte length for a read handle (leaf->bytes_total).
+int HeadlessNode::HandleStoredBytes(kv_handle_t handle,
+                                    uint64_t* out_bytes) const {
+    if (!out_bytes) return KV_E_INVAL;
+    std::lock_guard<std::mutex> lk(mu_);
+    auto it = handles_.find(handle);
+    if (it == handles_.end()) return KV_E_NOT_FOUND;
+    if (it->second.kind != HandleKind::kRead || !it->second.leaf) {
+        return KV_E_INVAL;  // not a read handle
+    }
+    *out_bytes = it->second.leaf->bytes_total;
+    return KV_OK;
+}
+
 // ---------------------------------------------------------------------------
 // Reserve
 // ---------------------------------------------------------------------------

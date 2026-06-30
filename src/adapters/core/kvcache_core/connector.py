@@ -194,6 +194,16 @@ class KVCacheConnector:
         if rc != 0:
             raise KVCacheError("kv_release", rc)
 
+    def stored_bytes(self, handle: int) -> int:
+        """Total stored byte length of a read handle's cached chunk (KVZ-3).
+        Lets a caller size a fetch buffer exactly for a variable-size payload
+        (e.g. a KV-tensor-compressed blob)."""
+        out = self._ffi.new("size_t*")
+        rc = self._lib.kv_lookup_stored_bytes(self._ctx, handle, out)
+        if rc != 0:
+            raise KVCacheError("kv_lookup_stored_bytes", rc)
+        return int(out[0])
+
     # ---------------------------------------------------- KV-tensor codec (KVZ)
 
     def compress_kv(self, values: Sequence[float], n_tokens: int,
