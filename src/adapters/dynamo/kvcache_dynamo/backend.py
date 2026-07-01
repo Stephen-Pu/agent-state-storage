@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from typing import Optional, Sequence, Set
 
-from kvcache_core import KVCacheConnector
+from kvcache_core import KVCacheConnector, compress_retrieve, compress_store
 
 from .async_load import AsyncLoadDriver
 
@@ -45,11 +45,20 @@ class DynamoKVBMConnector:
     BLOCK_TOKENS = 16
 
     def __init__(self, tenant_id: str, model_id: str,
-                 bytes_per_token: int) -> None:
+                 bytes_per_token: int, *, compress: bool = False,
+                 compress_bits: int = 8) -> None:
         if bytes_per_token <= 0:
             raise ValueError("bytes_per_token must be positive")
+        # B7 — optional lossy KV-tensor compression (shared kvcache_core
+        # helper, same codec as the vLLM/SGLang/AIBrix adapters). fp32
+        # [tokens][elems], so bytes_per_token must be a whole number of floats.
+        if compress and bytes_per_token % 4 != 0:
+            raise ValueError("compress requires bytes_per_token to be a "
+                             "multiple of 4 (fp32 elements)")
         self._cx = KVCacheConnector(tenant_id=tenant_id, model_id=model_id)
         self._bytes_per_token = bytes_per_token
+        self._compress = compress
+        self._compress_bits = compress_bits
         self._closed = False
 
     # ----- KVBM-style verbs ------------------------------------------------
@@ -84,6 +93,10 @@ class DynamoKVBMConnector:
             raise ValueError("tokens must be non-empty")
         if not kv_bytes:
             raise ValueError("kv_bytes must be non-empty")
+        if self._compress:
+            compress_store(self._cx, tokens, kv_bytes, self._bytes_per_token,
+                           bits=self._compress_bits)
+            return
         locator = self._cx.make_locator(tokens)
         rsv = self._cx.reserve(locator, len(kv_bytes))
         if rsv.slot_bytes < len(kv_bytes):
@@ -100,6 +113,8 @@ class DynamoKVBMConnector:
         ``matched_tokens * bytes_per_token`` bytes — the matched prefix,
         which may be shorter than the requested ``tokens``.
         """
+        if self._compress:
+            return compress_retrieve(self._cx, tokens, self._bytes_per_token)
         hit = self._cx.lookup(tokens)
         if hit is None:
             return None
