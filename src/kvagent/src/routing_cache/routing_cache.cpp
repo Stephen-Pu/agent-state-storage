@@ -1,6 +1,7 @@
 // LLD §4.2 — LRU prefix → primary-node cache with TTL.
 #include "routing_cache/routing_cache.h"
 
+#include <mutex>  // std::unique_lock — libstdc++ doesn't pull it in via <shared_mutex>
 #include <utility>
 
 namespace kvcache::agent::routing_cache {
