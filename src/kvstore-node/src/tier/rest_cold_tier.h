@@ -22,11 +22,12 @@
 // the full IColdTier contract is exercised deterministically with no network.
 //
 // Auth: optional `Authorization: Bearer <token>` header + optional TLS
-// material (CA / client cert+key), mirroring HttpEtcdClient::Options. Full AWS
-// SigV4 request signing is intentionally out of scope — the "native-rest"
-// backend targets generic REST UFS gateways (MinIO/S3 path-style with a
-// pre-shared token, Alluxio's S3 REST endpoint, etc.). SigV4 can be added as
-// a transport decorator later (TODO(stephen)) without touching RestColdTier.
+// material (CA / client cert+key), mirroring HttpEtcdClient::Options. This
+// covers generic REST UFS gateways (MinIO/S3 path-style with a pre-shared
+// token, Alluxio's S3 REST endpoint, etc.). For talking directly to AWS S3,
+// full SigV4 request signing is provided as a transport decorator
+// (`sigv4_transport.h`, Phase B5) — wrap the transport passed to
+// `CreateWithTransport`; RestColdTier itself stays unaware of signing.
 #pragma once
 
 #include <cstddef>
