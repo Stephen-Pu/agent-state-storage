@@ -55,6 +55,18 @@ DramTier::LookupResult DramTier::Lookup(const DramKey& key) {
     return {};
 }
 
+DramTier::LookupResult DramTier::Peek(const DramKey& key) const {
+    std::lock_guard lk(mu_);
+    auto it = index_.find(key);
+    if (it == index_.end()) return {};
+    const Entry& e = *it->second;
+    LookupResult r{};
+    r.data       = e.data.data();
+    r.data_bytes = e.data.size();
+    r.where      = (e.q == Queue::Am) ? HitWhere::kAm : HitWhere::kA1in;
+    return r;
+}
+
 void DramTier::Insert(const DramKey& key, const uint8_t* data, std::size_t n) {
     std::lock_guard lk(mu_);
     // If already resident, replace in place (keep its queue).

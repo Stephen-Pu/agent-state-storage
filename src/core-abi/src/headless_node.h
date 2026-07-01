@@ -137,8 +137,14 @@ class HeadlessNode {
     // tier.
     //
     // Returns KV_E_NOT_FOUND if the locator has no sealed chunk (never sealed,
-    // or evicted since). Returns KV_E_INVAL if `out` is null. Read-only: no
-    // refcount side effects, no tier promotion.
+    // or evicted from DRAM since). On any non-KV_OK return `*out` is fully
+    // cleared (both chunk_path and bytes). Returns KV_E_INVAL if `out` is
+    // null.
+    //
+    // Genuinely read-only (A9 R5 — primary-oblivious): uses DramTier::Peek,
+    // which does NOT splice the Am LRU list and does NOT promote from colder
+    // tiers. Only DRAM-resident chunks are returned; if the chunk has been
+    // demoted to NVMe/Cold, KV_E_NOT_FOUND is returned rather than promoting.
     struct ReplicaChunk {
         std::vector<node::prefix::ChunkHash> chunk_path;
         std::vector<uint8_t>                 bytes;

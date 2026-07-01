@@ -670,17 +670,19 @@ int HeadlessNode::ReplicaFetch(const kv_locator_t& locator, ReplicaChunk* out) {
         out->chunk_path = it->second;
     }
 
-    // Fetch the sealed bytes from the tier stack (DRAM → NVMe → Cold).
-    // This is the same unified path Fetch/FetchWithPriority uses, but
-    // without the NIXL transfer or refcount side effects.
-    std::string err;
-    auto f = tm_->Fetch(key, &err);
-    if (f.hit == node::tier::TierManager::FetchHit::kMiss) {
-        // Chunk was evicted from all tiers since Seal.
+    // Read the sealed bytes from DRAM only, without mutating eviction order or
+    // promoting across tiers (A9 R5 — primary-oblivious / read-only contract).
+    // The warm-set filter guarantees hot chunks are DRAM-resident at replication
+    // time; return KV_E_NOT_FOUND if the chunk has been evicted from DRAM.
+    auto peek = tm_->PeekDram(key);
+    if (peek.where == node::tier::DramTier::HitWhere::kMiss ||
+        peek.where == node::tier::DramTier::HitWhere::kGhost) {
+        // Chunk was evicted from DRAM since Seal.
         out->chunk_path.clear();
+        out->bytes.clear();
         return KV_E_NOT_FOUND;
     }
-    out->bytes = std::move(f.data);
+    out->bytes.assign(peek.data, peek.data + peek.data_bytes);
     return KV_OK;
 }
 

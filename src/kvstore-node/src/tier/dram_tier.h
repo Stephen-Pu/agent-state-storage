@@ -92,6 +92,12 @@ class DramTier {
     // Returns the data and updates 2Q bookkeeping per admission rules.
     LookupResult Lookup(const DramKey& key);
 
+    // Read-only peek: returns data for a key resident in A1in or Am WITHOUT
+    // updating eviction order (no Am splice, no ghost promotion). Used by
+    // ReplicaFetch to satisfy the primary-oblivious / no-tier-mutation contract
+    // required by A9 R5.
+    LookupResult Peek(const DramKey& key) const;
+
     // Insert / replace a value. Triggers eviction(s) to keep within capacity.
     // The data is copied into the tier (callers can free their buffer).
     void Insert(const DramKey& key, const uint8_t* data, std::size_t n);

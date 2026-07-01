@@ -35,6 +35,9 @@ void TierManager::StageToDram(const DramKey& key, const uint8_t* data, std::size
 DramTier::LookupResult TierManager::LookupDram(const DramKey& key) {
     return dram_->Lookup(key);
 }
+DramTier::LookupResult TierManager::PeekDram(const DramKey& key) const {
+    return dram_->Peek(key);
+}
 bool TierManager::EraseDram(const DramKey& key) { return dram_->Erase(key); }
 
 // ---- T3 ----

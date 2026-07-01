@@ -78,6 +78,13 @@ int SealChunk(HeadlessNode* node,
 }
 
 // Initialise the HeadlessNode singleton once for the whole test binary.
+//
+// SHARED-SINGLETON NOTE: all tests in this binary share the same process-static
+// HeadlessNode instance. Each test seals its own chunk under a unique locator
+// (distinct model + token set), so tests are independent in the happy-path.
+// The NotFoundForUnsealedLocator test relies on its chosen locator ("rf-miss-
+// model" + tokens {99001,99002,99003}) never being sealed by another test in
+// this binary — keep it that way when adding new tests.
 HeadlessNode* GetNode() {
     static HeadlessNode* node = [] {
         auto opts = kvcache::abi::BuildCtxOptions(nullptr);

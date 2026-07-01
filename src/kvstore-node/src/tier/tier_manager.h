@@ -62,6 +62,8 @@ class TierManager {
     // ---- T2 (DRAM) ----
     void                    StageToDram(const DramKey& key, const uint8_t* data, std::size_t n);
     DramTier::LookupResult  LookupDram (const DramKey& key);
+    // Read-only peek: no LRU splice, no tier promotion. Used by ReplicaFetch.
+    DramTier::LookupResult  PeekDram   (const DramKey& key) const;
     bool                    EraseDram  (const DramKey& key);
 
     // ---- T3 (NVMe) ----
