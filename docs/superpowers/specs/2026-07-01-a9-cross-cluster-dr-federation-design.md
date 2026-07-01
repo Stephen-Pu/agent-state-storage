@@ -72,10 +72,13 @@ the primary.
 2. Standby `ReplicationConsumer` (subscribed via M-2 `Subscribe`) receives it;
    the warm-set filter passes; enqueue `C.locator`.
 3. A fetch worker calls `ReplicaFetch(C.locator)` on the primary owner node
-   (addressed via `node_id` from the event) and receives the chunk bytes.
-4. The worker commits locally through the normal ingest path
-   (`Reserve(locator) → write → Publish → Seal(tokens)`), so the standby's ART
-   index + tiers populate exactly as if the chunk had been sealed locally.
+   (addressed via `node_id` from the event) and receives **`{chunk_path,
+   bytes}`**. (The event carries a locator, not tokens; the primary resolves
+   locator→chunk_path via the G-1 content index and returns both.)
+4. The worker commits locally: `Reserve(locator) → write → Publish →
+   `**`SealByChunkPath(chunk_path)`** — a token-free `Seal` variant, since the
+   standby never has the original tokens. The standby's ART index + tiers then
+   populate exactly as if the chunk had been sealed locally.
 5. The cursor advances to `C.epoch`.
 
 On **failover**, ops repoints the engine adapters / `kvagent` to the standby
@@ -84,20 +87,25 @@ new traffic mostly hits, not recomputes.
 
 ## 6. Interfaces (new / changed)
 
-- **`kv_event_t` — additive `warm` (tier) hint.** The event must tell the
-  consumer whether the sealed chunk is in a hot tier, so the filter runs
-  standby-side without a primary round-trip. Additive field; no ABI break for
-  existing subscribers.
-- **`ReplicaFetch(locator) → bytes` — new primary-side read RPC.** The event
-  carries a *locator* (prefix_hash), not raw tokens, and the existing `Fetch`
-  is by-handle-from-`Lookup` (which needs tokens). `ReplicaFetch` resolves a
-  locator directly to its chunk bytes via the **G-1 content index**
-  (`LocatorContentKey → chunk_path → leaf`). Read-only; gated by
-  `VerifyInternalPeer` (A11). *(Rejected alternative: widen the replication
-  event to carry the full token sequence — larger events, and duplicates the
-  locator→chunk resolution the content index already does.)*
+- **`kv_event_t.tier` — reuse the existing field (no schema change).** The
+  event struct already carries `tier` (`0..4`, originating tier); the warm-set
+  filter reads it directly, so **no ABI change is needed** (better than the
+  earlier draft's proposed new `warm` field). Verify the `Seal` path populates
+  `tier` with the resident tier on `ADD` emission.
+- **`ReplicaFetch(locator) → {chunk_path, bytes}` — new primary-side read.**
+  The event carries a *locator* (prefix_hash), not raw tokens, and the existing
+  `Fetch` is by-handle-from-`Lookup` (which needs tokens). `ReplicaFetch`
+  resolves the locator via the **G-1 content index** (`LocatorContentKey →
+  chunk_path`) and returns the `chunk_path` **and** the bytes, so the standby
+  can commit without tokens. Read-only; gated by `VerifyInternalPeer` (A11) on
+  the gRPC surface. *(Rejected alternative: widen the event to carry the full
+  token sequence — larger events, and duplicates resolution the content index
+  already does.)*
+- **`SealByChunkPath(handle, chunk_path)` — token-free commit on the standby.**
+  A `Seal` variant that takes a pre-computed `chunk_path` instead of deriving
+  it from tokens (which the standby lacks). Shares `Seal`'s commit body.
 - **A11 extension (small):** accept a `replica` workload kind (or reuse
-  `node`) in `VerifyInternalPeer` for the replication link.
+  `node`) in `VerifyInternalPeer` for the replication link (gRPC surface only).
 
 ## 7. Error handling & resilience
 
