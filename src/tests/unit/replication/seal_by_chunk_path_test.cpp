@@ -152,10 +152,63 @@ TEST_F(SealByChunkPathTest, CommittedChunkIsLookupableByOriginalTokens) {
 }
 
 // ---------------------------------------------------------------------------
-// Invalid handle: SealByChunkPath on an unknown handle returns KV_E_INVAL.
+// Unknown handle: SealByChunkPath on a handle that does not exist returns
+// KV_E_NOT_FOUND (handles_.find misses → early-exit before kind check).
 // ---------------------------------------------------------------------------
-TEST_F(SealByChunkPathTest, UnknownHandleReturnsInval) {
+TEST_F(SealByChunkPathTest, UnknownHandleReturnsNotFound) {
     const std::vector<kvcache::node::prefix::ChunkHash> dummy_path(1);
     EXPECT_EQ(node_->SealByChunkPath(/*handle=*/999999, dummy_path),
               KV_E_NOT_FOUND);
+}
+
+// ---------------------------------------------------------------------------
+// Wrong-kind handle: SealByChunkPath on a kRead handle (obtained via Lookup)
+// returns KV_E_INVAL — the handle exists but is not an ingest/seal-eligible
+// handle, so the kind check fires before any commit logic runs.
+// ---------------------------------------------------------------------------
+TEST_F(SealByChunkPathTest, ReadHandleReturnsInval) {
+    // We need a committed chunk in the ART so Lookup can return a kRead handle.
+    // Use a unique token range to avoid ART conflicts with other tests.
+    constexpr std::size_t kNTokens       = 16;
+    constexpr std::size_t kBytesPerToken = 64;
+    constexpr std::size_t kPayloadBytes  = kNTokens * kBytesPerToken;
+
+    std::vector<uint32_t> tokens(kNTokens);
+    for (uint32_t i = 0; i < kNTokens; ++i) tokens[i] = 7000u + i;
+
+    const std::string  model       = "sbcp-wrong-kind-model";
+    const uint64_t     tenant_hash = 0;
+    const uint64_t     model_hash  = Fnv1a64(model);
+    const kv_locator_t loc         = MakeLocator(model, tokens);
+    const std::vector<uint8_t> payload(kPayloadBytes, 0xAB);
+
+    // Seal a chunk via the normal token path so it lands in the ART.
+    kv_handle_t      h    = 0;
+    kv_buffer_desc_t slot{};
+    ASSERT_EQ(node_->Reserve(&loc, payload.size(),
+                              tenant_hash, model_hash,
+                              &h, &slot),
+              KV_OK);
+    if (slot.addr) std::memcpy(slot.addr, payload.data(), payload.size());
+    kv_buffer_desc_t empty{};
+    ASSERT_EQ(node_->Publish(h, empty, payload.size()), KV_OK);
+    ASSERT_EQ(node_->Seal(h, tokens.data(), tokens.size()), KV_OK);
+
+    // Obtain a kRead handle via Lookup — this is NOT an ingest handle.
+    kv_locator_t out_meta{};
+    kv_handle_t  lh      = 0;
+    uint32_t     matched = 0;
+    ASSERT_EQ(node_->Lookup(/*tenant_id=*/"",
+                             tenant_hash, model_hash,
+                             tokens.data(), tokens.size(),
+                             &out_meta, &lh, &matched),
+              KV_OK);
+    ASSERT_GT(matched, 0u);
+
+    // SealByChunkPath on a kRead handle must return KV_E_INVAL (kind check).
+    const std::vector<kvcache::node::prefix::ChunkHash> dummy_path(1);
+    EXPECT_EQ(node_->SealByChunkPath(lh, dummy_path), KV_E_INVAL);
+
+    // Clean up the read handle.
+    node_->Release(lh);
 }

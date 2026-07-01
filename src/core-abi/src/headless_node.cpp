@@ -611,7 +611,7 @@ int HeadlessNode::SealCommit(
         leaf->bytes_total           = watermark;
         leaf->refcount.Acquire();
         std::span<const node::prefix::ChunkHash> path_span{
-            req.chunk_path.data(), req.chunk_path.size()};
+            chunk_path.data(), chunk_path.size()};
         auto ins = art_wal_
             ? art_wal_->Insert(path_span, std::move(leaf))
             : art_->Insert(path_span, std::move(leaf));
