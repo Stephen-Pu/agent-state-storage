@@ -1,0 +1,17 @@
+[package]
+name = "kvcache"
+version = "0.1.0"
+edition = "2021"
+description = "Rust bindings for the KV Cache Core ABI (libkvcache). LLD §6.1.2; integration-stack.md A4 (Phase 2)."
+license = "Apache-2.0"
+# Not published — in-tree binding built against the sibling libkvcache.dylib.
+publish = false
+
+[lib]
+name = "kvcache"
+
+# Deliberately dependency-free. The Core ABI keys its ART path on the ctx's
+# tenant/model hashes + the token sequence (see headless_node.cpp Seal/Lookup),
+# so the binding needs no external hash crates to drive a full round-trip. This
+# keeps `cargo build` hermetic (no crates.io fetch, no vendoring in CI).
+[dependencies]
