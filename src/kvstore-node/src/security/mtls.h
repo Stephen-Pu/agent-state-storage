@@ -127,6 +127,46 @@ class MtlsRegistry {
     static std::optional<std::string> ResolveTenant(const CertInfo& cert,
                                                      const MtlsRegistry* registry);
 
+    // ----- Phase A11 — internal-workload SPIFFE identity ------------------
+    //
+    // B8.x authenticated *tenants* on their SPIFFE id. A11 gives the cluster's
+    // OWN components (node, control-plane, kvagent) first-class SPIFFE
+    // identities too, so internal node↔node / node↔CP calls verify the peer's
+    // per-workload SVID instead of trusting a single shared cluster cert.
+    //
+    // Internal workload SVID convention: spiffe://<trust-domain>/<kind>/<id>
+    //   kind ∈ { "node", "cp", "kvagent" }  (cp's <id> is optional — singleton)
+    // A tenant SVID (`…/tenant/<id>`) is deliberately NOT an internal workload:
+    // VerifyInternalPeer rejects it, keeping the tenant and cluster identity
+    // planes distinct.
+    enum class WorkloadKind : uint8_t {
+        kUnknown      = 0,
+        kNode         = 1,
+        kControlPlane = 2,
+        kAgent        = 3,
+    };
+    struct WorkloadIdentity {
+        WorkloadKind kind = WorkloadKind::kUnknown;
+        std::string  id;            // instance id ("" allowed for cp)
+        std::string  trust_domain;
+    };
+
+    // Parse a SPIFFE id as an internal workload identity. Returns nullopt if
+    // it's not a well-formed workload SVID (bad SPIFFE id, unrecognised kind —
+    // e.g. a tenant SVID — or a node/kvagent id that's empty).
+    static std::optional<WorkloadIdentity> ParseWorkloadIdentity(
+        const std::string& spiffe_uri);
+
+    // The internal-peer gate: an internal RPC handler calls this to confirm the
+    // TLS peer is a legitimate cluster workload. Requires the cert to carry a
+    // SPIFFE id that (a) parses as a workload identity, (b) — when
+    // `required_trust_domain` is non-empty — is in that trust domain. Returns
+    // the WorkloadIdentity on success, nullopt (→ caller rejects) otherwise.
+    // A CN-only cert or a tenant SVID does NOT authenticate as an internal
+    // peer. Static + grpc-free so it's unit-testable without a handshake.
+    static std::optional<WorkloadIdentity> VerifyInternalPeer(
+        const CertInfo& cert, const std::string& required_trust_domain);
+
     // Phase B8 — full leaf-cert parse. When built with OpenSSL
     // (KVCACHE_HAVE_OPENSSL), this does a real PEM → X509 decode and
     // pulls the subject CN + every DNS/URI subjectAltName + the first

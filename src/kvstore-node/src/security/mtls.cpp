@@ -174,6 +174,48 @@ std::optional<std::string> MtlsRegistry::ResolveTenant(
     return std::nullopt;
 }
 
+std::optional<MtlsRegistry::WorkloadIdentity> MtlsRegistry::ParseWorkloadIdentity(
+    const std::string& spiffe_uri) {
+    auto parsed = ParseSpiffeId(spiffe_uri);
+    if (!parsed) return std::nullopt;
+    // path is "/<kind>[/<id...>]" with a leading '/'; bare-domain => empty.
+    const std::string& path = parsed->path;
+    if (path.size() < 2 || path[0] != '/') return std::nullopt;
+    const std::size_t seg_end = path.find('/', 1);
+    const std::string kind_tok = (seg_end == std::string::npos)
+                                     ? path.substr(1)
+                                     : path.substr(1, seg_end - 1);
+    const std::string id = (seg_end == std::string::npos)
+                               ? std::string()
+                               : path.substr(seg_end + 1);
+
+    WorkloadKind kind = WorkloadKind::kUnknown;
+    if (kind_tok == "node")         kind = WorkloadKind::kNode;
+    else if (kind_tok == "cp")      kind = WorkloadKind::kControlPlane;
+    else if (kind_tok == "kvagent") kind = WorkloadKind::kAgent;
+    else return std::nullopt;  // tenant / anything else is not an internal workload
+
+    // node + kvagent are per-instance and must carry a non-empty id; cp is a
+    // singleton whose id is optional.
+    if ((kind == WorkloadKind::kNode || kind == WorkloadKind::kAgent) && id.empty())
+        return std::nullopt;
+
+    return WorkloadIdentity{kind, id, parsed->trust_domain};
+}
+
+std::optional<MtlsRegistry::WorkloadIdentity> MtlsRegistry::VerifyInternalPeer(
+    const CertInfo& cert, const std::string& required_trust_domain) {
+    // Internal peers MUST present a SPIFFE SVID — a CN-only cert does not
+    // authenticate as a cluster workload.
+    if (!cert.spiffe_id.has_value()) return std::nullopt;
+    auto wi = ParseWorkloadIdentity(*cert.spiffe_id);
+    if (!wi) return std::nullopt;  // not a recognised internal workload (e.g. a tenant SVID)
+    // Reject a workload minted under a foreign/rogue trust domain.
+    if (!required_trust_domain.empty() && wi->trust_domain != required_trust_domain)
+        return std::nullopt;
+    return wi;
+}
+
 bool MtlsRegistry::HasRealParser() noexcept {
 #ifdef KVCACHE_HAVE_OPENSSL
     return true;

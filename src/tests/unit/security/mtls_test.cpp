@@ -310,3 +310,77 @@ TEST(ResolveTenantTest, TableEntryWithoutTenantFallsThrough) {
     ASSERT_TRUE(t.has_value());
     EXPECT_EQ(*t, "cn-tenant") << "empty .tenant → fall through (no /tenant/ seg → CN)";
 }
+
+// ----- Phase A11 — internal-workload SPIFFE identity ----------------------
+
+TEST(WorkloadIdentityTest, ParsesNodeCpAgent) {
+    auto n = MtlsRegistry::ParseWorkloadIdentity("spiffe://kvcache.example/node/n1");
+    ASSERT_TRUE(n.has_value());
+    EXPECT_EQ(n->kind, MtlsRegistry::WorkloadKind::kNode);
+    EXPECT_EQ(n->id, "n1");
+    EXPECT_EQ(n->trust_domain, "kvcache.example");
+
+    auto cp = MtlsRegistry::ParseWorkloadIdentity("spiffe://kvcache.example/cp");
+    ASSERT_TRUE(cp.has_value());
+    EXPECT_EQ(cp->kind, MtlsRegistry::WorkloadKind::kControlPlane);
+    EXPECT_EQ(cp->id, "") << "cp is a singleton — empty id allowed";
+
+    auto cp2 = MtlsRegistry::ParseWorkloadIdentity("spiffe://kvcache.example/cp/leader-0");
+    ASSERT_TRUE(cp2.has_value());
+    EXPECT_EQ(cp2->kind, MtlsRegistry::WorkloadKind::kControlPlane);
+    EXPECT_EQ(cp2->id, "leader-0");
+
+    auto a = MtlsRegistry::ParseWorkloadIdentity("spiffe://kvcache.example/kvagent/a7");
+    ASSERT_TRUE(a.has_value());
+    EXPECT_EQ(a->kind, MtlsRegistry::WorkloadKind::kAgent);
+    EXPECT_EQ(a->id, "a7");
+}
+
+TEST(WorkloadIdentityTest, RejectsTenantAndUnknownAndMalformed) {
+    // A tenant SVID is NOT an internal workload.
+    EXPECT_FALSE(MtlsRegistry::ParseWorkloadIdentity(
+        "spiffe://kvcache.example/tenant/acme").has_value());
+    // Unknown kind.
+    EXPECT_FALSE(MtlsRegistry::ParseWorkloadIdentity(
+        "spiffe://kvcache.example/frobnicator/x").has_value());
+    // node with no id.
+    EXPECT_FALSE(MtlsRegistry::ParseWorkloadIdentity(
+        "spiffe://kvcache.example/node").has_value());
+    // Bare trust domain (no kind).
+    EXPECT_FALSE(MtlsRegistry::ParseWorkloadIdentity(
+        "spiffe://kvcache.example").has_value());
+    // Not a SPIFFE URI at all.
+    EXPECT_FALSE(MtlsRegistry::ParseWorkloadIdentity("https://nope").has_value());
+}
+
+TEST(VerifyInternalPeerTest, AcceptsMatchingWorkloadRejectsForeignAndTenant) {
+    // Valid node SVID in the required trust domain → accepted.
+    CertInfo node_cert;
+    node_cert.spiffe_id = "spiffe://kvcache.example/node/n1";
+    auto ok = MtlsRegistry::VerifyInternalPeer(node_cert, "kvcache.example");
+    ASSERT_TRUE(ok.has_value());
+    EXPECT_EQ(ok->kind, MtlsRegistry::WorkloadKind::kNode);
+    EXPECT_EQ(ok->id, "n1");
+
+    // Same SVID but a foreign/rogue trust domain → rejected.
+    EXPECT_FALSE(MtlsRegistry::VerifyInternalPeer(node_cert, "attacker.tld").has_value());
+
+    // A tenant SVID must NOT authenticate as an internal peer.
+    CertInfo tenant_cert;
+    tenant_cert.spiffe_id = "spiffe://kvcache.example/tenant/acme";
+    EXPECT_FALSE(MtlsRegistry::VerifyInternalPeer(tenant_cert, "kvcache.example").has_value());
+
+    // A CN-only cert (no SPIFFE SVID) must NOT authenticate as an internal peer.
+    CertInfo cn_only;
+    cn_only.cn = "some-internal-cn";
+    EXPECT_FALSE(MtlsRegistry::VerifyInternalPeer(cn_only, "kvcache.example").has_value());
+}
+
+TEST(VerifyInternalPeerTest, EmptyRequiredTrustDomainAcceptsAnyDomain) {
+    CertInfo cert;
+    cert.spiffe_id = "spiffe://some.other.td/node/n9";
+    // No trust-domain requirement → accept the workload regardless of domain.
+    auto ok = MtlsRegistry::VerifyInternalPeer(cert, "");
+    ASSERT_TRUE(ok.has_value());
+    EXPECT_EQ(ok->kind, MtlsRegistry::WorkloadKind::kNode);
+}
