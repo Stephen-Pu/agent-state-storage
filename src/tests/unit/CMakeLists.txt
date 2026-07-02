@@ -416,6 +416,16 @@ kvcache_add_test(test_warm_filter
                   replication/warm_filter_test.cpp
                   ${NODE_PREFIX_SRCS})
 
+# Task 4 — A9 DR warm-standby: ReplicationCursor (header-only monotonic epoch cursor).
+#
+# The cursor lives in replication/replication_cursor.h and has no .cpp of its own.
+# The test needs NODE_PREFIX_SRCS for the kv_event_stream.h include chain
+# (though the cursor itself is a pure-header dependency tracker, NODE_PREFIX_SRCS
+# is included for consistency with other replication tests).
+kvcache_add_test(test_replication_cursor
+                  replication/replication_cursor_test.cpp
+                  ${NODE_PREFIX_SRCS})
+
 # Phase A1 — kvagent module tests. Each test links the agent's
 # static lib; the include surface is the kvagent_lib PUBLIC dirs.
 if(KVCACHE_BUILD_AGENT)
