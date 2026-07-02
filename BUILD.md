@@ -65,10 +65,15 @@ ctest --test-dir build --output-on-failure
 cmake -S src -B build \
   -DKVCACHE_ENABLE_ROCKSDB=ON  \  # link real librocksdb (apt: librocksdb-dev)
   -DKVCACHE_ENABLE_ETCD=ON     \  # compile GrpcEtcdClient (needs vendored proto)
-  -DKVCACHE_ENABLE_SPDK=ON     \  # SPDK NVMe backend (TODO)
-  -DKVCACHE_ENABLE_CUDA=ON     \  # GPUDirect paths (TODO)
-  -DKVCACHE_BUILD_TESTS=OFF       # skip the 31 gtest binaries
+  -DKVCACHE_HAVE_GRPC=ON       \  # real gRPC NodeData service + client (needs grpc + protoc)
+  -DKVCACHE_ENABLE_SPDK=ON     \  # SPDK user-space NVMe backend (A3; needs SPDK stack)
+  -DKVCACHE_ENABLE_CUDA=ON     \  # CUDA pinned-tier path (A2; full GDS/GPUDirect-Storage still TODO)
+  -DKVCACHE_BUILD_TESTS=OFF       # skip the gtest binaries (~80)
 ```
+
+> **Regulated Mode (A10)** is a runtime opt-in on the `kvstore-node` binary, not a
+> build flag: pass `--regulated-mode` with one or more `--boundary-allow <host-glob|CIDR>`
+> rules. Off by default ⇒ unchanged behavior. See `docs/superpowers/specs/2026-07-01-a10-regulated-mode-design.md`.
 
 ### Outputs
 
@@ -77,7 +82,7 @@ cmake -S src -B build \
 | `libkvcache.so` (Core ABI)  | `build/core-abi/libkvcache.{so,dylib}` |
 | `kvstore-node` binary       | `build/kvstore-node/kvstore-node`     |
 | `kvagent` binary            | `build/kvagent/kvagent`               |
-| Test binaries (26)          | `build/tests/unit/test_*`             |
+| Test binaries (~80)         | `build/tests/unit/test_*`             |
 
 ### Running a single test
 

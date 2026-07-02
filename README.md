@@ -422,19 +422,30 @@ gantt
     207 unit + integration tests          :done, 2026-02-15, 2026-05-22
     Engine adapters (4× P0)               :done, 2026-03-01, 2026-05-22
     K8s operator + Helm + mTLS            :done, 2026-04-01, 2026-05-22
-    section Phase 2 — 6–12 mo
-    UCX / GDR / GDS / NVLink backends     :2026-06-01, 90d
-    SPDK NVMe-oF cross-node               :2026-07-01, 60d
+    section Phase 2 — backends & adapters
+    UCX RMA backend (A1)                  :done, 2026-06-20, 2026-06-27
+    CUDA pinned tier (A2)                 :done, 2026-06-27, 2026-06-28
+    SPDK user-space NVMe (A3)             :done, 2026-06-28, 2026-06-29
     KV-tensor codec (delta+quant+entropy) :done, 2026-06-01, 2026-06-05
     KV compression adapter integration    :done, 2026-06-05, 2026-06-05
+    Dynamo / LMDeploy / TGI adapters      :done, 2026-06-10, 2026-06-20
+    GDS / GDR / NVLink backends           :2026-09-01, 90d
     EFA / Azure IB / GCP TCPx certif.     :2026-09-01, 90d
-    Dynamo / LMDeploy / TGI adapters      :2026-10-01, 90d
-    NVIDIA CMX backend (Storage-Next)     :2027-01-01, 120d
-    section Phase 3 — 12–24 mo
-    FedRAMP / sovereign-cloud path        :2027-05-22, 180d
-    Cross-cluster KV federation           :2027-07-01, 180d
-    SPIFFE internal identity              :2027-08-01, 90d
+    Ascend HIXL (A4) / NVIDIA CMX (A5)    :2027-01-01, 120d
+    section Phase 3 — federation & compliance
+    SPIFFE internal identity (A11)        :done, 2026-06-28, 2026-06-30
+    Cross-cluster KV federation (A9)      :done, 2026-06-30, 2026-07-02
+    FedRAMP / sovereign Regulated Mode (A10) :done, 2026-07-01, 2026-07-02
 ```
+
+> **Status note (2026-07-02):** the Phase-2/3 items marked *done* above landed as
+> locally-verified cores — A1/A2/A3 on real AWS GPU/NVMe hardware, A9 (DR
+> warm-standby + gRPC `ReplicaFetch` surface) and A10 (Regulated Mode boundary
+> guard + startup gate + cold-tier wiring) via in-process/loopback tests.
+> Remaining production hardening is tracked in-code (`TODO`) and by design needs a
+> second cluster or specific hardware: true multi-cluster network E2E, the A9
+> server-side backend wiring, FIPS provider / KMS-envelope / hash-chained audit
+> (A10), and the Ascend/CMX hardware backends (A4/A5).
 
 ---
 
