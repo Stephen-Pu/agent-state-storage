@@ -426,6 +426,30 @@ kvcache_add_test(test_replication_cursor
                   replication/replication_cursor_test.cpp
                   ${NODE_PREFIX_SRCS})
 
+# Task 5 — A9 DR warm-standby: ReplicationConsumer (warm-filter + ReplicaFetch + commit).
+#
+# Mirrors test_replica_fetch / test_seal_by_chunk_path: compiles headless_node.cpp
+# directly so the non-ABI C++ symbols (ReplicaFetch, SealByChunkPath, Reserve,
+# Publish, SubscribeEvents) are reachable.  Links kvstore_node_core for all node
+# subsystem deps and kvcache_common for metrics / tracing utilities.
+kvcache_add_test(test_replication_consumer
+                  replication/replication_consumer_test.cpp
+                  ${CMAKE_SOURCE_DIR}/core-abi/src/headless_node.cpp
+                  ${CMAKE_SOURCE_DIR}/core-abi/src/ctx_options.cpp
+                  ${CMAKE_SOURCE_DIR}/core-abi/src/kv_status.cpp
+                  # replication_consumer.cpp is compiled from the kvstore-node src tree.
+                  ${KVCACHE_NODE_SRC}/replication/replication_consumer.cpp)
+target_include_directories(test_replication_consumer PRIVATE
+                  ${CMAKE_SOURCE_DIR}/core-abi/src
+                  ${KVCACHE_NODE_SRC})
+target_link_libraries(test_replication_consumer PRIVATE
+                  kvstore_node_core
+                  kvcache_common
+                  CURL::libcurl)
+if(OpenSSL_FOUND)
+    target_link_libraries(test_replication_consumer PRIVATE OpenSSL::Crypto)
+endif()
+
 # Phase A1 — kvagent module tests. Each test links the agent's
 # static lib; the include surface is the kvagent_lib PUBLIC dirs.
 if(KVCACHE_BUILD_AGENT)
