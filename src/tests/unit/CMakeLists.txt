@@ -291,6 +291,19 @@ kvcache_add_test(test_guarded_transport
                   ${KVCACHE_NODE_SRC}/tier/guarded_transport.cpp
                   ${KVCACHE_NODE_SRC}/security/boundary_guard.cpp)
 
+# A10 — BoundaryDenyObserver: factory that builds a DenyObserver wired to the
+# boundary-deny metric counter and the AuditLog. boundary_deny_observer.h is
+# header-only; the test links NODE_SECURITY_SRCS + NODE_QOS_SRCS so AuditLog +
+# rbac + mtls + TenantHash resolve (same pattern as test_audit).
+kvcache_add_test(test_boundary_deny_observer
+                  security/boundary_deny_observer_test.cpp
+                  ${KVCACHE_NODE_SRC}/security/boundary_guard.cpp
+                  ${NODE_SECURITY_SRCS}
+                  ${NODE_QOS_SRCS})
+if(OpenSSL_FOUND)
+    target_link_libraries(test_boundary_deny_observer PRIVATE OpenSSL::Crypto)
+endif()
+
 kvcache_add_test(test_metrics           obs/metrics_test.cpp)
 # LLD §6.2 — logging facade. Foundation only; per-callsite migration
 # of fprintf/cerr → KV_LOG_* is per-file follow-on work.

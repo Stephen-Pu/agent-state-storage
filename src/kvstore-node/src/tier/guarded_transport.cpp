@@ -104,8 +104,8 @@ HttpResult GuardedHttpTransport::Request(const std::string&              method,
 
     // Evaluate the boundary decision.  An empty host means the URL was
     // unparseable — fail-closed without even consulting the guard.
-    security::Decision d = host.empty()
-        ? security::Decision{false, "unparseable URL (fail-closed)"}
+    security::BoundaryDecision d = host.empty()
+        ? security::BoundaryDecision{false, "unparseable URL (fail-closed)"}
         : guard_->Check(ep);
 
     if (!d.allow) {

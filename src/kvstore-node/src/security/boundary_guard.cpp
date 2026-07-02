@@ -49,7 +49,7 @@ bool IpInCidr(std::string_view ip, std::string_view cidr) {
     return (net & mask) == (addr & mask);
 }
 
-Decision BoundaryGuard::Check(const Endpoint& ep) const {
+BoundaryDecision BoundaryGuard::Check(const Endpoint& ep) const {
     if (ep.host.empty()) return {false, "empty host (fail-closed)"};
     for (const auto& r : policy_.allow) {
         if (!PurposeMatches(r.purpose, ep.purpose)) continue;

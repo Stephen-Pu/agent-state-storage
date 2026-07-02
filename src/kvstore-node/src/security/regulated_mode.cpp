@@ -25,7 +25,7 @@ ValidationResult ValidateRegulatedMode(const RegulatedModeConfig& cfg) {
     BoundaryGuard guard(BuildPolicy(cfg.allow_rules, /*default_deny=*/true));
 
     for (const auto& sink : cfg.configured_sinks) {
-        Decision d = guard.Check(sink);
+        BoundaryDecision d = guard.Check(sink);
         if (!d.allow) {
             return {false, std::string("Regulated Mode: configured ") +
                            PurposeName(sink.purpose) + " sink '" + sink.host +
