@@ -426,19 +426,27 @@ kvcache_add_test(test_replication_cursor
                   replication/replication_cursor_test.cpp
                   ${NODE_PREFIX_SRCS})
 
-# Task 5 — A9 DR warm-standby: ReplicationConsumer (warm-filter + ReplicaFetch + commit).
+# Task 5 / Task 6 — A9 DR warm-standby: ReplicationConsumer.
 #
-# Mirrors test_replica_fetch / test_seal_by_chunk_path: compiles headless_node.cpp
-# directly so the non-ABI C++ symbols (ReplicaFetch, SealByChunkPath, Reserve,
-# Publish, SubscribeEvents) are reachable.  Links kvstore_node_core for all node
-# subsystem deps and kvcache_common for metrics / tracing utilities.
+# The consumer now lives in kvcache (core-abi), so we link the dylib rather
+# than compiling replication_consumer.cpp directly.  headless_node.cpp is also
+# inside kvcache, so the non-ABI C++ symbols we need (ReplicaFetch,
+# SealByChunkPath, Reserve, Publish, SubscribeEvents, Start, Stop) are all
+# exported via the dylib's hidden-visibility build — but wait: visibility is
+# hidden. We therefore still compile headless_node.cpp directly so tests can
+# call non-ABI C++ methods; replication_consumer.cpp is NOT compiled separately
+# because it's already part of kvcache.  We link kvcache to pull in its
+# dependent link graph (kvstore_node_core etc.) and also compile
+# headless_node.cpp directly so C++ methods are symbol-visible in the test.
+#
+# Include path: core-abi/src so the test can #include "replication/replication_consumer.h"
+#               and "headless_node.h" / "ctx_options.h" directly.
 kvcache_add_test(test_replication_consumer
                   replication/replication_consumer_test.cpp
                   ${CMAKE_SOURCE_DIR}/core-abi/src/headless_node.cpp
                   ${CMAKE_SOURCE_DIR}/core-abi/src/ctx_options.cpp
                   ${CMAKE_SOURCE_DIR}/core-abi/src/kv_status.cpp
-                  # replication_consumer.cpp is compiled from the kvstore-node src tree.
-                  ${KVCACHE_NODE_SRC}/replication/replication_consumer.cpp)
+                  ${CMAKE_SOURCE_DIR}/core-abi/src/replication/replication_consumer.cpp)
 target_include_directories(test_replication_consumer PRIVATE
                   ${CMAKE_SOURCE_DIR}/core-abi/src
                   ${KVCACHE_NODE_SRC})

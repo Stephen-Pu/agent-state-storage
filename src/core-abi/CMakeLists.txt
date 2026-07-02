@@ -10,6 +10,7 @@ add_library(kvcache SHARED
     src/kv_status.cpp
     src/headless_node.cpp
     src/ctx_options.cpp
+    src/replication/replication_consumer.cpp  # A9 DR — warm-standby consumer
 )
 
 target_include_directories(kvcache
