@@ -20,6 +20,7 @@
 //   auto tier = RestColdTier::CreateWithTransport(opts, guarded, &err);
 #pragma once
 
+#include <cassert>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -53,7 +54,10 @@ class GuardedHttpTransport final : public IHttpTransport {
                        DenyObserver                                 on_deny = {})
       : inner_(std::move(inner)),
         guard_(std::move(guard)),
-        on_deny_(std::move(on_deny)) {}
+        on_deny_(std::move(on_deny)) {
+    assert(inner_ != nullptr && "inner transport must not be null");
+    assert(guard_ != nullptr && "BoundaryGuard must not be null");
+  }
 
   HttpResult Request(const std::string&              method,
                      const std::string&              url,

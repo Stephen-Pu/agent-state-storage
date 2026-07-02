@@ -37,6 +37,19 @@ std::string HostFromUrl(std::string_view url, uint16_t* port_out) {
         return "";
     }
 
+    // Strip userinfo (RFC 3986 §3.2 "[userinfo@]host[:port]"): drop everything
+    // up to and including the LAST '@' — the real host is what follows.
+    // Using rfind handles "user:p@ss@host" correctly (still yields "host").
+    auto at = authority.rfind('@');
+    if (at != std::string_view::npos) authority = authority.substr(at + 1);
+
+    // After stripping userinfo the remaining authority may be empty
+    // (e.g. "https://user@/path") — fail-closed.
+    if (authority.empty()) {
+        if (port_out) *port_out = 0;
+        return "";
+    }
+
     // Split host and optional port.
     auto colon = authority.find(':');
     std::string host{authority.substr(0, colon)};
