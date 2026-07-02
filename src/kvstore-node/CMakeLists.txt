@@ -143,9 +143,11 @@ if(KVCACHE_HAVE_GRPC)
     # Phase M-1: NodeData gRPC service + a thin Server wrapper. Built
     # only when grpc is present; otherwise the binary stays on the
     # NodeRuntime accept-and-close placeholder.
+    # Task 4 — A9: GrpcReplicaSource client (ReplicaSource → ReplicaFetch RPC).
     add_library(kvstore_node_grpc STATIC
         src/grpc/node_data_service.cpp
         src/grpc/grpc_server.cpp
+        src/grpc/grpc_replica_source.cpp
     )
     target_include_directories(kvstore_node_grpc
         PUBLIC

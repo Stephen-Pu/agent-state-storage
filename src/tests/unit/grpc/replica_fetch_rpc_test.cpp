@@ -1,4 +1,4 @@
-// Phase A9 / A11 — ReplicaFetch gRPC handler test.
+// Phase A9 / A11 — ReplicaFetch gRPC handler test + GrpcReplicaSource E2E.
 //
 // Verifies two things over a real grpc::Server loopback:
 //
@@ -35,6 +35,7 @@
 
 #include "grpc/grpc_server.h"
 #include "grpc/node_data_service.h"
+#include "grpc/grpc_replica_source.h"   // Task 4 — GrpcReplicaSource
 #include "headless_node.h"   // compiled directly into this binary (not via dylib)
 #include "ctx_options.h"
 #include "kvcache/kv_abi.h"
@@ -43,6 +44,7 @@
 
 using kvcache::node::grpc_server::GrpcServer;
 using kvcache::node::grpc_server::NodeDataServiceImpl;
+using kvcache::node::grpc_client::GrpcReplicaSource;
 using kvcache::proto::NodeData;
 using kvcache::abi::HeadlessNode;
 
@@ -183,9 +185,12 @@ class ReplicaFetchRpcTest : public ::testing::Test {
             "127.0.0.1:" + std::to_string(server_->BoundPort());
         auto ch = ::grpc::CreateChannel(addr, ::grpc::InsecureChannelCredentials());
         stub_ = NodeData::NewStub(ch);
+        // Shared-ownership stub for GrpcReplicaSource (same channel, no extra dial).
+        stub_shared_ = NodeData::NewStub(ch);
     }
 
     void TearDown() override {
+        stub_shared_.reset();
         stub_.reset();
         if (server_) server_->Stop();
         server_.reset();
@@ -201,6 +206,8 @@ class ReplicaFetchRpcTest : public ::testing::Test {
     std::unique_ptr<NodeDataServiceImpl> svc_;
     std::unique_ptr<GrpcServer>          server_;
     std::unique_ptr<NodeData::Stub>      stub_;
+    // Shared-ownership stub supplied to GrpcReplicaSource (same channel).
+    std::shared_ptr<NodeData::Stub>      stub_shared_;
 };
 
 }  // namespace
@@ -317,6 +324,81 @@ TEST_F(ReplicaFetchRpcTest, InternalPeerMissOnUnsealedLocator) {
         << "chunk_path must be empty on a miss";
     EXPECT_TRUE(resp.data().empty())
         << "data must be empty on a miss";
+}
+
+// ---------------------------------------------------------------------------
+// Task 4 — A9 gRPC surface: GrpcReplicaSource end-to-end loopback.
+//
+// Seals a chunk on the backing HeadlessNode, then uses GrpcReplicaSource
+// (backed by the same in-process server as the other cases) to pull it.
+// This exercises the full path:
+//   GrpcReplicaSource::Fetch
+//     → ReplicaFetchRequest marshalling
+//     → NodeDataServiceImpl::ReplicaFetch (VerifyInternalPeer → backend)
+//     → HeadlessNode::ReplicaFetch
+//     → ReplicaFetchResponse unmarshalling
+//     → HeadlessNode::ReplicaChunk populated
+// ---------------------------------------------------------------------------
+TEST_F(ReplicaFetchRpcTest, GrpcReplicaSourceRoundTrips) {
+    constexpr std::size_t kNTokens       = 32;
+    constexpr std::size_t kBytesPerToken = 64;
+    constexpr std::size_t kPayloadBytes  = kNTokens * kBytesPerToken;
+
+    // Unique model+tokens so this test doesn't collide with others sharing the
+    // singleton HeadlessNode.
+    const std::string model = "grpc-replica-source-e2e-model";
+    std::vector<uint32_t> tokens(kNTokens);
+    for (uint32_t i = 0; i < kNTokens; ++i) tokens[i] = 60000u + i;
+
+    const kv_locator_t loc = MakeLocator(model, tokens);
+    const std::vector<uint8_t> payload(kPayloadBytes, 0xCD);
+
+    // Seal the chunk on the backing node so ReplicaFetch finds it.
+    ASSERT_EQ(SealChunkOnNode(node_, loc, tokens, payload, model), KV_OK)
+        << "Seal must succeed before GrpcReplicaSource can retrieve the chunk";
+
+    // The always-allow verifier installed in SetUp means the stub authenticates
+    // as an internal peer even though the channel is insecure.
+    GrpcReplicaSource src(stub_shared_);
+
+    HeadlessNode::ReplicaChunk rc;
+    ASSERT_EQ(src.Fetch(loc, &rc), KV_OK)
+        << "GrpcReplicaSource::Fetch must return KV_OK for a sealed chunk";
+
+    EXPECT_FALSE(rc.chunk_path.empty())
+        << "chunk_path must be non-empty after a successful fetch";
+    for (const auto& h : rc.chunk_path) {
+        EXPECT_EQ(h.size(), 8u) << "each ChunkHash must be 8 bytes";
+    }
+    EXPECT_EQ(rc.bytes.size(), kPayloadBytes)
+        << "bytes size must match the sealed payload";
+    for (std::size_t i = 0; i < kPayloadBytes; ++i) {
+        ASSERT_EQ(rc.bytes[i], 0xCDu) << "payload byte mismatch at index " << i;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Task 4 — A9: GrpcReplicaSource maps a transport failure to KV_E_NOT_FOUND.
+//
+// Tears down the server after the stub is built; the next Fetch() call will
+// fail at the transport layer. GrpcReplicaSource must return KV_E_NOT_FOUND
+// (not a crash, not an unhandled gRPC status).
+// ---------------------------------------------------------------------------
+TEST_F(ReplicaFetchRpcTest, GrpcReplicaSourceMapsTransportErrorToNotFound) {
+    // Build the source before tearing down the server so the stub is
+    // pointing at a now-dead listener.
+    GrpcReplicaSource src(stub_shared_);
+
+    // Stop the server — all subsequent RPCs will fail at the transport layer.
+    server_->Stop();
+
+    const std::string model = "grpc-replica-source-transport-error-model";
+    const std::vector<uint32_t> tokens = {50000u, 50001u};
+    const kv_locator_t loc = MakeLocator(model, tokens);
+
+    HeadlessNode::ReplicaChunk rc;
+    EXPECT_EQ(src.Fetch(loc, &rc), KV_E_NOT_FOUND)
+        << "transport failure must map to KV_E_NOT_FOUND (benign miss)";
 }
 
 #endif  // KVCACHE_HAVE_GRPC
