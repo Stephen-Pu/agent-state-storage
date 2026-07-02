@@ -131,7 +131,12 @@ void ReplicationConsumer::Start() {
 
     // Subscribe to the primary's event stream. HeadlessNode spawns its own
     // poller thread that calls EventCbDispatch for each event.
-    // SubscriptionId is uint64_t; static_assert in headless_node.h confirms.
+    // sub_id_ mirrors HeadlessNode::SubscriptionId (a uint64_t); the
+    // static_assert below guards that assumption at compile time.
+    static_assert(sizeof(decltype(primary_.SubscribeEvents(EventCbDispatch,
+                                                           this))) ==
+                      sizeof(uint64_t),
+                  "sub_id_ assumes SubscribeEvents returns a uint64_t handle");
     // Store with release so a concurrent Stop() that loads with acquire sees
     // the live handle and never skips UnsubscribeEvents.
     sub_id_.store(
