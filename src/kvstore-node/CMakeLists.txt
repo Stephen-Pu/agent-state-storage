@@ -16,6 +16,7 @@ set(NODE_CORE_SRCS
     src/tier/encrypting_cold_tier.cpp
     src/tier/metrics_cold_tier.cpp
     src/tier/sigv4_transport.cpp
+    src/tier/guarded_transport.cpp      # A10 — egress boundary guard decorator
     # codec
     src/codec/kv_tensor_codec.cpp
     # prefix
@@ -45,6 +46,9 @@ set(NODE_CORE_SRCS
     src/security/mtls.cpp
     src/security/rbac.cpp
     src/security/audit.cpp
+    src/security/boundary_guard.cpp         # A10 — BoundaryGuard
+    src/security/boundary_policy_builder.cpp # A10 — BuildPolicy
+    src/security/regulated_mode.cpp         # A10 — ValidateRegulatedMode startup gate
     # cluster
     src/cluster/etcd_client.cpp
     src/cluster/http_etcd_client.cpp
@@ -65,6 +69,7 @@ set(NODE_CORE_SRCS
     #     kvcache_common.
     # runtime (Phase L-1)
     src/runtime/node_runtime.cpp
+    src/runtime/regulated_flags.cpp         # A10 — Task 3: CLI flag → RegulatedModeConfig helper
 )
 
 add_library(kvstore_node_core STATIC ${NODE_CORE_SRCS})

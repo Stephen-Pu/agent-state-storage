@@ -338,7 +338,10 @@ kvcache_add_test(test_locator           common/locator_test.cpp)
 # Phase W-2 — canonical FNV-1a-64 golden vectors (cross-language lock).
 kvcache_add_test(test_hashing           common/hashing_test.cpp)
 kvcache_add_test(test_node_runtime      runtime/node_runtime_test.cpp
-                 ${KVCACHE_NODE_SRC}/runtime/node_runtime.cpp)
+                 ${KVCACHE_NODE_SRC}/runtime/node_runtime.cpp
+                 ${KVCACHE_NODE_SRC}/security/regulated_mode.cpp
+                 ${KVCACHE_NODE_SRC}/security/boundary_policy_builder.cpp
+                 ${KVCACHE_NODE_SRC}/security/boundary_guard.cpp)
 
 # A10 — Task 2: Regulated Mode startup gate in NodeRuntime.
 # Verifies that NodeRuntime refuses to bind when Regulated Mode is enabled and
@@ -349,6 +352,18 @@ kvcache_add_test(test_node_runtime      runtime/node_runtime_test.cpp
 kvcache_add_test(test_node_runtime_regulated
                   runtime/node_runtime_regulated_test.cpp
                   ${KVCACHE_NODE_SRC}/runtime/node_runtime.cpp
+                  ${KVCACHE_NODE_SRC}/security/regulated_mode.cpp
+                  ${KVCACHE_NODE_SRC}/security/boundary_policy_builder.cpp
+                  ${KVCACHE_NODE_SRC}/security/boundary_guard.cpp)
+
+# A10 — Task 3: RegulatedFlags CLI-flag helper.
+# Tests BuildRegulatedModeConfig (the pure flag→config converter that keeps
+# main.cpp thin). Links regulated_flags.cpp + the security TUs needed by
+# ValidateRegulatedMode (regulated_mode.cpp → boundary_policy_builder.cpp →
+# boundary_guard.cpp) so the test can call ValidateRegulatedMode for sanity.
+kvcache_add_test(test_regulated_flags
+                  runtime/regulated_flags_test.cpp
+                  ${KVCACHE_NODE_SRC}/runtime/regulated_flags.cpp
                   ${KVCACHE_NODE_SRC}/security/regulated_mode.cpp
                   ${KVCACHE_NODE_SRC}/security/boundary_policy_builder.cpp
                   ${KVCACHE_NODE_SRC}/security/boundary_guard.cpp)
