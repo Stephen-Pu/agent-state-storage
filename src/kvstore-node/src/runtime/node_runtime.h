@@ -34,6 +34,8 @@
 #include <string>
 #include <thread>
 
+#include "security/regulated_mode.h"
+
 namespace kvcache::node::runtime {
 
 class NodeRuntime {
@@ -48,6 +50,12 @@ class NodeRuntime {
         // claims it with a real grpc::Server instead. NodeRuntime
         // still owns the metrics port + signal handling regardless.
         bool        skip_grpc_listener = false;
+
+        // Regulated Mode (A10). When .enabled is true, NodeRuntime refuses to
+        // bind (Ok()==false, error() names the offending sink) if any configured
+        // egress sink is out of the declared boundary. Disabled (default) =>
+        // unchanged.
+        security::RegulatedModeConfig regulated;   // default: {enabled=false}
     };
 
     // Construct + bind both listeners. On failure `Ok()` returns false

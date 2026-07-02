@@ -340,6 +340,19 @@ kvcache_add_test(test_hashing           common/hashing_test.cpp)
 kvcache_add_test(test_node_runtime      runtime/node_runtime_test.cpp
                  ${KVCACHE_NODE_SRC}/runtime/node_runtime.cpp)
 
+# A10 — Task 2: Regulated Mode startup gate in NodeRuntime.
+# Verifies that NodeRuntime refuses to bind when Regulated Mode is enabled and
+# a configured sink is out of boundary. Links the security TUs needed by
+# ValidateRegulatedMode (regulated_mode.cpp → boundary_policy_builder.cpp →
+# boundary_guard.cpp). node_runtime.cpp is compiled directly (not via kvcache
+# dylib) so the constructor changes are exercised without a full link graph.
+kvcache_add_test(test_node_runtime_regulated
+                  runtime/node_runtime_regulated_test.cpp
+                  ${KVCACHE_NODE_SRC}/runtime/node_runtime.cpp
+                  ${KVCACHE_NODE_SRC}/security/regulated_mode.cpp
+                  ${KVCACHE_NODE_SRC}/security/boundary_policy_builder.cpp
+                  ${KVCACHE_NODE_SRC}/security/boundary_guard.cpp)
+
 # Phase G-3 — Reserve backpressure surfaces through /metrics. Links
 # the C ABI shared lib (kvcache) so it drives the singleton through
 # its real surface.

@@ -136,6 +136,17 @@ void WriteHttpResponse(int fd, int status, std::string_view content_type,
 }  // namespace
 
 NodeRuntime::NodeRuntime(const Options& opts) : opts_(opts) {
+    // A10 Regulated Mode: fail-closed startup gate. Refuse to bind if any
+    // configured egress sink is out of the declared boundary.
+    {
+        security::ValidationResult v = security::ValidateRegulatedMode(opts_.regulated);
+        if (!v.ok) {
+            ok_    = false;
+            error_ = v.error;
+            return;                 // do NOT bind listeners
+        }
+    }
+
     // grpc port: bind iff the caller hasn't reserved it for an external
     // grpc::Server (Phase M-1 main.cpp opts into this when KVCACHE_HAVE_GRPC).
     if (!opts_.skip_grpc_listener) {
