@@ -274,6 +274,15 @@ kvcache_add_test(test_boundary_policy_builder
                   ${KVCACHE_NODE_SRC}/security/boundary_policy_builder.cpp
                   ${KVCACHE_NODE_SRC}/security/boundary_guard.cpp)
 
+# A10 — RegulatedMode: fail-closed startup gate that checks every configured
+# egress sink against the operator allowlist and runs injectable requirement
+# predicates (FIPS / KMS / audit seam). Off by default → no-op.
+kvcache_add_test(test_regulated_mode
+                  security/regulated_mode_test.cpp
+                  ${KVCACHE_NODE_SRC}/security/regulated_mode.cpp
+                  ${KVCACHE_NODE_SRC}/security/boundary_policy_builder.cpp
+                  ${KVCACHE_NODE_SRC}/security/boundary_guard.cpp)
+
 # A10 — GuardedHttpTransport: fail-closed boundary check on the cold-tier egress seam.
 # IHttpTransport / HttpResult are header-only (pure virtual + POD in rest_cold_tier.h),
 # so no libcurl dependency is required for this decorator + unit test alone.
