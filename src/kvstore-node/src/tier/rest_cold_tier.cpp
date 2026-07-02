@@ -130,18 +130,22 @@ std::shared_ptr<IHttpTransport> MakeCurlHttpTransport() {
     return std::make_shared<CurlHttpTransport>();
 }
 
+std::shared_ptr<IHttpTransport> MakeCurlHttpTransport(const RestColdTier::Options& opts) {
+    auto t = std::make_shared<CurlHttpTransport>();
+    t->timeout_ms_ = opts.timeout_ms;
+    t->ca_   = opts.ca_pem_path;
+    t->cert_ = opts.client_cert_pem_path;
+    t->key_  = opts.client_key_pem_path;
+    return t;
+}
+
 // ---------------------------------------------------------------------------
 // RestColdTier
 // ---------------------------------------------------------------------------
 
 std::unique_ptr<RestColdTier> RestColdTier::Create(const Options& opts,
                                                    std::string*   err) {
-    auto t = std::make_shared<CurlHttpTransport>();
-    t->timeout_ms_ = opts.timeout_ms;
-    t->ca_   = opts.ca_pem_path;
-    t->cert_ = opts.client_cert_pem_path;
-    t->key_  = opts.client_key_pem_path;
-    return CreateWithTransport(opts, std::move(t), err);
+    return CreateWithTransport(opts, MakeCurlHttpTransport(opts), err);
 }
 
 std::unique_ptr<RestColdTier> RestColdTier::CreateWithTransport(

@@ -109,4 +109,10 @@ class RestColdTier final : public IColdTier {
     std::shared_ptr<IHttpTransport> http_;
 };
 
+// TLS/timeout-aware overload: builds a CurlHttpTransport and applies the
+// timeout_ms, ca_pem_path, client_cert_pem_path, and client_key_pem_path
+// fields from opts before returning. Used by RestColdTier::Create and by
+// cold_tier.cpp's guarded branch so both paths carry the same TLS knobs.
+std::shared_ptr<IHttpTransport> MakeCurlHttpTransport(const RestColdTier::Options& opts);
+
 }  // namespace kvcache::node::tier

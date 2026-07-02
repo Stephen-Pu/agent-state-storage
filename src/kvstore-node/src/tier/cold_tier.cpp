@@ -1,6 +1,7 @@
 // LLD §3.3 T4 — FilesystemColdTier implementation.
 #include "tier/cold_tier.h"
 
+#include "security/boundary_guard.h"      // A10 — full BoundaryGuard / BoundaryPolicy defs
 #include "tier/rest_cold_tier.h"          // B3  — native-rest backend
 #include "tier/guarded_transport.h"       // A10 — egress boundary guard decorator
 #include "tier/compressing_cold_tier.h"   // B3.1 — compression middleware
@@ -186,7 +187,8 @@ std::unique_ptr<IColdTier> CreateBaseColdTier(const ColdTierOptions& opts,
         }
         // A10 — Regulated Mode: wrap the transport in a GuardedHttpTransport
         // so every object-store request is boundary-checked before dialing.
-        std::shared_ptr<IHttpTransport> transport = MakeCurlHttpTransport();
+        // Use the opts-aware overload so TLS/timeout knobs are preserved.
+        std::shared_ptr<IHttpTransport> transport = MakeCurlHttpTransport(ro);
         transport = std::make_shared<GuardedHttpTransport>(
             std::move(transport), opts.guard, opts.deny_observer);
         return RestColdTier::CreateWithTransport(ro, std::move(transport), err);

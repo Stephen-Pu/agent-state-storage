@@ -36,7 +36,9 @@
 #include <string_view>
 #include <vector>
 
-#include "security/boundary_guard.h"  // BoundaryGuard, Endpoint
+// Forward declarations sufficient for the field declarations below.
+// The full definitions are included in cold_tier.cpp where they are needed.
+namespace kvcache::node::security { class BoundaryGuard; struct Endpoint; }
 #include "tier/dram_tier.h"           // DramKey reused as content key
 
 namespace kvcache::metrics { class Registry; }  // Phase O-4 — cold metrics
