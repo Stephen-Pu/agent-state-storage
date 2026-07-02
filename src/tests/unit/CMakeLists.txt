@@ -266,6 +266,14 @@ kvcache_add_test(test_boundary_guard
                   security/boundary_guard_test.cpp
                   ${KVCACHE_NODE_SRC}/security/boundary_guard.cpp)
 
+# A10 — BoundaryPolicyBuilder: classify operator allow-rules into host-glob vs CIDR.
+# Round-trips through BoundaryGuard, so compiles both boundary_policy_builder.cpp
+# and boundary_guard.cpp.
+kvcache_add_test(test_boundary_policy_builder
+                  security/boundary_policy_builder_test.cpp
+                  ${KVCACHE_NODE_SRC}/security/boundary_policy_builder.cpp
+                  ${KVCACHE_NODE_SRC}/security/boundary_guard.cpp)
+
 kvcache_add_test(test_metrics           obs/metrics_test.cpp)
 # LLD §6.2 — logging facade. Foundation only; per-callsite migration
 # of fprintf/cerr → KV_LOG_* is per-file follow-on work.
