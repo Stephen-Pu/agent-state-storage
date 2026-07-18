@@ -13,7 +13,7 @@
 >
 > **The recompute plane ships today. The memory plane is the frontier no one owns.**
 
-[![CI](https://github.com/Stephen-Pu/agentStateStorage/actions/workflows/ci.yml/badge.svg)](https://github.com/Stephen-Pu/agentStateStorage/actions)
+[![CI](https://github.com/Stephen-Pu/agent-state-storage/actions/workflows/ci.yml/badge.svg)](https://github.com/Stephen-Pu/agent-state-storage/actions)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)](https://en.cppreference.com/w/cpp/20)
 [![Go 1.22](https://img.shields.io/badge/Go-1.22+-blue.svg)](https://go.dev/)
@@ -227,7 +227,7 @@ decision it implements. **Six verbs, one C ABI** (`lookup / reserve / publish / 
 tier-opaque.
 
 ```bash
-git clone https://github.com/Stephen-Pu/agentStateStorage.git && cd agentStateStorage
+git clone https://github.com/Stephen-Pu/agent-state-storage.git && cd agent-state-storage
 python3 -m venv .venv && source .venv/bin/activate && pip install cffi pytest
 make all      # zero warnings · 210/210 tests pass · ~4 min cold start
 ```
