@@ -1,9 +1,10 @@
-# kvcache
+# The open data plane for AI state
 
-> **The open data plane for AI state.**
+> AI shifted from **storing data** to **maintaining state** — KV caches, checkpoints, sandboxes,
+> agent memory, execution state. We treat it as what it actually is: a **distributed memoization layer** —
+> identity-addressed and economically self-aware, multi-tenant and vendor-neutral.
 >
-> Identity-addressed. Economically self-aware. Multi-tenant. Vendor-neutral.
-> One spine for every state an AI system can't afford to lose — or to recompute.
+> **The recompute plane ships today. The memory plane is the frontier no one owns.**
 
 [![CI](https://github.com/Stephen-Pu/kvcache/actions/workflows/ci.yml/badge.svg)](https://github.com/Stephen-Pu/kvcache/actions)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
