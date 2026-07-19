@@ -341,6 +341,10 @@ kvcache_add_test(test_locator           common/locator_test.cpp)
 kvcache_add_test(test_state_identity    common/state_identity_test.cpp)
 # Phase W-2 — canonical FNV-1a-64 golden vectors (cross-language lock).
 kvcache_add_test(test_hashing           common/hashing_test.cpp)
+# SS-2 spine spike, Task 2 — ValuePolicy interface + state_kind-keyed
+# ValuePolicyRegistry. Header-only; needs only core/common include path
+# (already provided by kvcache_add_test).
+kvcache_add_test(test_value_policy_registry policy/value_policy_registry_test.cpp)
 kvcache_add_test(test_node_runtime      runtime/node_runtime_test.cpp
                  ${KVCACHE_NODE_SRC}/runtime/node_runtime.cpp
                  ${KVCACHE_NODE_SRC}/security/regulated_mode.cpp
