@@ -48,24 +48,27 @@ calls, not kind-conditional branches:
 | Store | `src/core-abi/src/headless_node.cpp` : `HeadlessNode::SealCommit` (line 599) | `policy_reg_.of(SK_KV).shouldStore(sid, cost)` |
 | Miss (lookup) | `src/core-abi/src/headless_node.cpp` : `HeadlessNode::Lookup` (line 333) | `policy_reg_.of(SK_KV).onMiss(miss_sid)` |
 | Miss (fetch) | `src/core-abi/src/headless_node.cpp` : `HeadlessNode::FetchWithPriority` (line 501) | `policy_reg_.of(SK_KV).onMiss(sid)` |
-| Evict | `src/kvstore-node/src/tier/dram_tier.cpp` : `DramTier::IsNotEvictable` (line 157; called from `EvictToFit`, line 183) | `evict_policy_->shouldEvict(sid, kDramTierId)` |
+| Evict | `src/kvstore-node/src/tier/dram_tier.cpp` : `DramTier::IsNotEvictable` (line 161; called from `EvictToFit`, lines 189/216/229) | `registry_->of(e.state_kind).shouldEvict(sid, kDramTierId)` |
 
 Each site resolves the policy through the registry (or a policy pointer
 injected the same way) and calls one of the three interface methods — there
 is no per-kind conditional logic inlined at the call site.
 
-> **Evict-seam caveat (honest scope):** the store and miss seams project a
-> real/known `SK_KV` identity, but `DramTier` entries carry only a 16-byte
-> `DramKey` (no locator/kind), so the evict seam currently **pins a synthetic
-> `SK_KV` identity**. It therefore proves "the evictor asks *a* policy," not
-> "the evictor asks the *right* policy per kind." This is harmless today
-> (`ValuePolicyKv::shouldEvict` ignores the identity and always returns
-> `kEvictable`), but it is the single most important Phase-2 trap: the moment a
-> B-class `NOT_EVICTABLE` entry can land in DRAM, this code would project
-> `SK_KV`, get `kEvictable`, and wrongly discard an irreplaceable entry.
-> **Per-kind evict dispatch (a real `StateIdentity`/kind carried into
-> `DramTier::Entry`) is part of the deferred DramTier eviction restructure**
-> (below) — and must land *before* any B-class entry is admitted to DRAM.
+> **Evict-seam note (updated 2026-07-19 — landed):** at SS-2 time the evict
+> seam pinned a *synthetic* `SK_KV` identity, because `DramTier` entries carried
+> only a 16-byte `DramKey` (no kind). That was the single most important Phase-2
+> trap: the moment a B-class `NOT_EVICTABLE` entry could land in DRAM, the seam
+> would project `SK_KV`, get `kEvictable`, and wrongly discard an irreplaceable
+> entry. **The eviction half of that trap is now closed** (DramTier eviction
+> restructure, `main` since `dd2e55f..a5c05bb`): `DramTier::Entry` carries a real
+> `state_kind`, `IsNotEvictable` dispatches through `registry_->of(e.state_kind)`
+> (no synthetic kind), and `EvictToFit` **skips** a `NOT_EVICTABLE` victim —
+> reverse-walking tail→front for the next evictable candidate and breaking
+> cleanly if none remains (no infinite loop). A B-class entry can therefore
+> reside in DRAM eviction-wise without being discarded, while KV victim selection
+> stays byte-identical to the old `pop_back()` path. **Still deferred:** nothing
+> *inserts* a B-class entry into the DRAM store path yet — that is the real
+> B-plane ingest, out of scope here; this closed only the *eviction* half.
 The kind-specific behavior lives entirely inside the policy implementation
 (`ValuePolicyKv`, `ValuePolicyPersistentStub`), which is exactly the
 separation Q3 asked for.
@@ -149,16 +152,15 @@ Not in scope for this spike; tracked as follow-on work:
 - **`StateIdentity` across the FFI/proto/wire boundary** — this spike keeps
   `StateIdentity` C++-core-only; threading it across the C ABI / gRPC wire
   format is out of scope.
-- **DramTier eviction restructure (B-plane prerequisite)** — two coupled gaps
-  that must both close before any B-class entry is admitted to DRAM: (a)
-  `DramTier::Entry` must carry a real `StateIdentity`/kind so the evict seam
-  dispatches the *correct* policy per victim (today it pins synthetic `SK_KV`
-  — see the evict-seam caveat above); and (b) the `EvictToFit` scan must be
-  restructured so a `NOT_EVICTABLE` victim is *skipped* (walk toward the front
-  for the next evictable candidate + a termination condition, or a demotion
-  hand-off) rather than the current `break` — a naive `break→continue` swap
-  would infinite-loop on the unadvanced tail (documented inline at the two
-  loop sites).
+- ~~**DramTier eviction restructure (B-plane prerequisite)**~~ — **LANDED
+  2026-07-19** (`dd2e55f..a5c05bb`; see the updated evict-seam note above and
+  the "Follow-on landed" section below). Both coupled gaps closed: (a)
+  `DramTier::Entry` now carries a real `state_kind` so the evict seam
+  dispatches the correct policy per victim (no synthetic `SK_KV`); and (b)
+  `EvictToFit` skips a `NOT_EVICTABLE` victim (reverse-walk tail→front for the
+  next evictable candidate, break cleanly if none) instead of the old `break`.
+  **What remains deferred:** the DRAM *store* path that would actually admit a
+  B-class entry — this closed only the eviction half of the trap.
 
 ---
 
@@ -183,6 +185,40 @@ This strengthens the Q3 result from "the interface *shape* admits opposite seman
 gate + economics) plugs in with zero spine change." **Still deferred:** the engine-facing
 **ingest connector** (how a runtime actually stores/retrieves a tool result through the
 ABI) — this proved the policy + identity layer, not a wired data path.
+
+---
+
+## Follow-on landed: DramTier per-kind eviction restructure (2026-07-19)
+
+The evict half of the B-plane trap (evict-seam note above) is closed. `main`
+since `dd2e55f..a5c05bb`:
+
+- `DramTier::Entry` carries a real `uint16_t state_kind` (last field, default
+  `SK_KV`); `Insert(..., state_kind = SK_KV)` threads it through both
+  `push_front` sites and the replace path; `KindOf(key)` exposes it.
+- `DramTier::Options::evict_policy` → `policy_registry` (a
+  `ValuePolicyRegistry*`); `IsNotEvictable(const Entry&)` dispatches through
+  `registry_->of(e.state_kind).shouldEvict(sid, kDramTierId)` — **no synthetic
+  `SK_KV`**. Unknown kind (no registered policy) → evictable, preserving today's
+  behavior.
+- `EvictToFit` both loops reverse-walk tail→front, **skip** a `NOT_EVICTABLE`
+  victim, evict the first evictable one, and `break` cleanly if none remains
+  (no infinite loop — the exact hazard a naive `break→continue` swap would hit).
+  `GhostInsert` still fires on A1in evictions only, not Am.
+- **KV victim selection is byte-identical** to the old `pop_back()` path: when
+  every entry is evictable the reverse walk lands on the tail on its first step.
+
+Verified: **540/540** (`cmake --build . -j4 && ctest --output-on-failure`,
+0 failed; the 15 pre-existing hardware/endpoint skips unchanged), including the
+order/callback-sensitive `DramTierTest.CapacityIsEnforced` and
+`OnEvictFiresForA1inAndAmDrops`, plus three new discriminating tests
+(`DramTierKind.*`: KV-still-evicts, skip-not-evictable, all-not-evictable-no-hang).
+Whole-branch review independently rebuilt and re-ran the suite and hand-traced
+KV byte-identity, per-queue bookkeeping, termination-by-construction, and
+iterator safety — no Critical/Important findings.
+
+**Still deferred:** the DRAM *store* path that would admit a B-class entry in
+the first place — the real B-plane ingest. This landed only the eviction half.
 
 ---
 
