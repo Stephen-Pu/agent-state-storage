@@ -75,7 +75,8 @@ DramTier::LookupResult DramTier::Peek(const DramKey& key) const {
     return r;
 }
 
-void DramTier::Insert(const DramKey& key, const uint8_t* data, std::size_t n) {
+void DramTier::Insert(const DramKey& key, const uint8_t* data, std::size_t n,
+                      uint16_t state_kind) {
     std::lock_guard lk(mu_);
     // If already resident, replace in place (keep its queue).
     auto cur = index_.find(key);
@@ -88,6 +89,7 @@ void DramTier::Insert(const DramKey& key, const uint8_t* data, std::size_t n) {
             am_bytes_used_   = am_bytes_used_   - old + n;
         }
         e.data.assign(data, data + n);
+        e.state_kind = state_kind;
         EvictToFit(0);
         return;
     }
@@ -102,14 +104,21 @@ void DramTier::Insert(const DramKey& key, const uint8_t* data, std::size_t n) {
     }
     EvictToFit(n);
     if (target == Queue::Am) {
-        am_.push_front(Entry{key, Queue::Am, std::vector<uint8_t>(data, data + n)});
+        am_.push_front(Entry{key, Queue::Am, std::vector<uint8_t>(data, data + n), state_kind});
         index_[key] = am_.begin();
         am_bytes_used_ += n;
     } else {
-        a1in_.push_front(Entry{key, Queue::A1in, std::vector<uint8_t>(data, data + n)});
+        a1in_.push_front(Entry{key, Queue::A1in, std::vector<uint8_t>(data, data + n), state_kind});
         index_[key] = a1in_.begin();
         a1in_bytes_used_ += n;
     }
+}
+
+std::optional<uint16_t> DramTier::KindOf(const DramKey& key) const {
+    std::lock_guard lk(mu_);
+    auto it = index_.find(key);
+    if (it == index_.end()) return std::nullopt;
+    return it->second->state_kind;
 }
 
 bool DramTier::Erase(const DramKey& key) {

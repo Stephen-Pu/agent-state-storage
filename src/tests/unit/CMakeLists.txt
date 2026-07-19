@@ -111,6 +111,8 @@ endif()
 
 kvcache_add_test(test_pinned_tier      tier/pinned_tier_test.cpp        ${NODE_TIER_SRCS})
 kvcache_add_test(test_dram_tier        tier/dram_tier_test.cpp          ${NODE_TIER_SRCS})
+# SS-2 B-plane spike, Task 1 — Entry.state_kind + Insert(..., state_kind).
+kvcache_add_test(test_dram_tier_evict_kind tier/dram_tier_evict_kind_test.cpp ${NODE_TIER_SRCS})
 kvcache_add_test(test_nvme_tier        tier/nvme_tier_test.cpp          ${NODE_TIER_SRCS})
 kvcache_add_test(test_cold_tier        tier/cold_tier_test.cpp          ${NODE_TIER_SRCS})
 kvcache_add_test(test_tier_manager     tier/tier_manager_test.cpp       ${NODE_TIER_SRCS})
@@ -122,7 +124,7 @@ kvcache_add_test(test_compressing_cold_tier tier/compressing_cold_tier_test.cpp 
 kvcache_add_test(test_encrypting_cold_tier  tier/encrypting_cold_tier_test.cpp  ${NODE_TIER_SRCS})
 kvcache_add_test(test_metrics_cold_tier     tier/metrics_cold_tier_test.cpp     ${NODE_TIER_SRCS})
 kvcache_add_test(test_sigv4_transport       tier/sigv4_transport_test.cpp       ${NODE_TIER_SRCS})
-foreach(_tier_t test_pinned_tier test_dram_tier test_nvme_tier test_cold_tier test_tier_manager test_rest_cold_tier test_compressing_cold_tier test_encrypting_cold_tier test_metrics_cold_tier test_sigv4_transport)
+foreach(_tier_t test_pinned_tier test_dram_tier test_dram_tier_evict_kind test_nvme_tier test_cold_tier test_tier_manager test_rest_cold_tier test_compressing_cold_tier test_encrypting_cold_tier test_metrics_cold_tier test_sigv4_transport)
     target_link_libraries(${_tier_t} PRIVATE CURL::libcurl)
     # B3.1 — block_codec.cpp pulls libzstd when the codec is enabled.
     if(KVCACHE_ENABLE_ZSTD)

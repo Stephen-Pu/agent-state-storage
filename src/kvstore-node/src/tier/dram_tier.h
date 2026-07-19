@@ -114,10 +114,19 @@ class DramTier {
 
     // Insert / replace a value. Triggers eviction(s) to keep within capacity.
     // The data is copied into the tier (callers can free their buffer).
-    void Insert(const DramKey& key, const uint8_t* data, std::size_t n);
+    // `state_kind` (SS-2 B-plane spike, Task 1) defaults to SK_KV so every
+    // existing KV caller is unaffected; non-KV callers (Task 2+) pass their
+    // own kind so per-kind eviction policy can be dispatched.
+    void Insert(const DramKey& key, const uint8_t* data, std::size_t n,
+                uint16_t state_kind = kvcache::common::SK_KV);
 
     // Drop a key from any of A1in / Am / A1out.
     bool Erase(const DramKey& key);
+
+    // Test-support accessor (SS-2 B-plane spike, Task 1) — returns the
+    // resident entry's state_kind, or nullopt if the key isn't in A1in/Am.
+    // Also relied on by the Task 3 eviction tests to observe kind routing.
+    std::optional<uint16_t> KindOf(const DramKey& key) const;
 
     // Capacity accounting.
     uint64_t UsedBytes()   const noexcept;
@@ -133,6 +142,10 @@ class DramTier {
         DramKey               key;
         Queue                 q;
         std::vector<uint8_t>  data;
+        // SS-2 B-plane spike, Task 1 — the state kind this entry holds
+        // (state_kind_e). Defaults to SK_KV so all existing KV call sites
+        // (aggregate-init without this field) are behavior-neutral.
+        uint16_t              state_kind = kvcache::common::SK_KV;
     };
     using EntryList = std::list<Entry>;
     using EntryIt   = EntryList::iterator;
