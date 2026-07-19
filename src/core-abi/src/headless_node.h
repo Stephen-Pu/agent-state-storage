@@ -241,6 +241,19 @@ class HeadlessNode {
     std::unordered_map<kv_handle_t, HandleState> handles_;
     std::atomic<kv_handle_t> next_handle_{1};
 
+    // SS-2 spine spike, Task 5 — state_kind-keyed ValuePolicy registry.
+    // Registered with SK_KV -> ValuePolicyKv in the constructor above.
+    // Consulted (not yet acted on economically) by the store/evict/miss
+    // seams on the hot path; see SealCommit, DramTier::EvictToFit (via
+    // Options::evict_policy), Lookup, and FetchWithPriority.
+    //
+    // Declared BEFORE tm_ so the ValuePolicyRegistry (and the
+    // ValuePolicyKv it owns) outlives DramTier's non-owning
+    // evict_policy_ pointer (Init() hands DramTier `&policy_reg_.of(SK_KV)`).
+    // Members are destroyed in reverse declaration order, so this ordering
+    // is what guarantees policy_reg_ is torn down after tm_/DramTier.
+    kvcache::common::ValuePolicyRegistry policy_reg_;
+
     // Subsystems.
     std::unique_ptr<node::tier::TierManager>           tm_;
     std::unique_ptr<node::meta::RocksdbStore>          rocks_;     // optional
@@ -253,13 +266,6 @@ class HeadlessNode {
     std::unique_ptr<node::prefix::ArtWal>              art_wal_;
     std::unique_ptr<node::prefix::EventStream>         events_;
     std::unique_ptr<node::transport::NixlWrapper>      nixl_;
-
-    // SS-2 spine spike, Task 5 — state_kind-keyed ValuePolicy registry.
-    // Registered with SK_KV -> ValuePolicyKv in the constructor above.
-    // Consulted (not yet acted on economically) by the store/evict/miss
-    // seams on the hot path; see SealCommit, DramTier::EvictToFit (via
-    // Options::evict_policy), Lookup, and FetchWithPriority.
-    kvcache::common::ValuePolicyRegistry policy_reg_;
 
     // ----- event subscription bookkeeping (Phase M-2) -----
     struct EventSub {

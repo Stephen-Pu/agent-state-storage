@@ -170,6 +170,16 @@ void DramTier::EvictToFit(std::size_t incoming_bytes) {
         // so we stop this eviction pass rather than discard the victim.
         // Unreached today: ValuePolicyKv::shouldEvict always returns
         // kEvictable, so the SAME victims are evicted as before this seam.
+        //
+        // NOTE(B-plane follow-on): `break` (stop this eviction pass) is
+        // deliberate, NOT `continue`. This loop always re-inspects the SAME
+        // unadvanced tail entry (a1in_.back()) — a bare `continue` here
+        // would re-check the identical non-evictable entry forever
+        // (infinite loop). When B-class NOT_EVICTABLE entries can actually
+        // land in DRAM, this needs a real scan restructure (walk toward the
+        // front for the first evictable candidate + a termination
+        // condition, or a demotion hand-off), not a keyword swap. Unreached
+        // today (KV -> kEvictable).
         if (IsNotEvictable()) break;
         // Evict the FIFO tail of A1in into the ghost queue.
         const Entry& victim = a1in_.back();
@@ -183,6 +193,16 @@ void DramTier::EvictToFit(std::size_t incoming_bytes) {
     // Now ensure overall capacity is honored. Prefer evicting from Am tail
     // (true LRU) once A1in is at its budget.
     while (a1in_bytes_used_ + am_bytes_used_ + incoming_bytes > capacity_bytes_) {
+        // NOTE(B-plane follow-on): `break` here is deliberate, NOT
+        // `continue`, for the same reason as the A1in loop above. This
+        // loop always re-inspects the SAME unadvanced tail entry
+        // (am_.back(), or a1in_.back() once am_ is empty) — a bare
+        // `continue` would spin on the identical non-evictable entry
+        // forever (infinite loop). Needs a real scan restructure (walk
+        // toward the front for the first evictable candidate + a
+        // termination condition, or a demotion hand-off) when B-class
+        // NOT_EVICTABLE entries can actually land in DRAM, not a keyword
+        // swap. Unreached today (KV -> kEvictable).
         if (IsNotEvictable()) break;  // see note above
         if (!am_.empty()) {
             const Entry& victim = am_.back();
