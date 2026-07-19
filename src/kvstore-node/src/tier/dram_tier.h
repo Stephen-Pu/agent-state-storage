@@ -38,6 +38,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include "value_policy.h"  // SS-2 spine spike, Task 5 — evict seam (ValuePolicy)
+
 namespace kvcache::node::tier {
 
 // 16-byte content-address key. Higher-level callers compute this from the
@@ -70,6 +72,18 @@ class DramTier {
         uint64_t  capacity_bytes      = 16ull << 30;  // 16 GiB default
         uint32_t  a1out_max_entries   = 200000;       // ghost queue, key-only
         OnEvictFn on_evict;                           // optional
+        // SS-2 spine spike, Task 5 — evict seam. When set, EvictToFit
+        // consults this policy before discarding a chosen victim. Entries
+        // here carry only a content-address DramKey (no locator), so the
+        // projected StateIdentity is SK_KV-only for this spike (the KV
+        // policy is kind-agnostic in shouldEvict). Not owned; must outlive
+        // the DramTier. Defaults to nullptr (no gating — today's
+        // unconditional-evict behavior).
+        // Pointee is non-const: ValuePolicy's virtual methods (shouldEvict
+        // et al.) are not const-qualified (see value_policy.h) — every
+        // existing call site (ValuePolicyRegistry::of() included) goes
+        // through a non-const reference/pointer.
+        kvcache::common::ValuePolicy* evict_policy = nullptr;
     };
 
     explicit DramTier(const Options& opts);
@@ -125,6 +139,8 @@ class DramTier {
 
     void EvictToFit(std::size_t incoming_bytes);
     void GhostInsert(const DramKey& key);
+    // SS-2 spine spike, Task 5 — evict seam helper (see Options::evict_policy).
+    bool IsNotEvictable() const;
 
     mutable std::mutex mu_;
 
@@ -144,6 +160,9 @@ class DramTier {
     uint64_t am_bytes_used_    = 0;
 
     OnEvictFn on_evict_;
+
+    // SS-2 spine spike, Task 5 — evict seam (see Options::evict_policy).
+    kvcache::common::ValuePolicy* evict_policy_ = nullptr;
 };
 
 }  // namespace kvcache::node::tier

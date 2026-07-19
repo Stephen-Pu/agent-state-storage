@@ -197,6 +197,16 @@ bool HeadlessNode::Init(const Options& opts, std::string* err) {
         tier_opts.dram.on_evict =
             [this](const node::tier::DramKey& k) { this->OnDramEvict(k); };
     }
+    // SS-2 spine spike, Task 5 — evict seam. Inject the registered SK_KV
+    // policy so DramTier::EvictToFit asks the policy before discarding a
+    // victim. policy_reg_ was populated with SK_KV in the constructor
+    // (before Init() runs), so of(SK_KV) is always valid here; the
+    // reference is stable for HeadlessNode's lifetime (same lifetime as
+    // tm_/dram_).
+    if (!tier_opts.dram.evict_policy) {
+        tier_opts.dram.evict_policy =
+            &policy_reg_.of(kvcache::common::SK_KV);
+    }
     // Phase O-4 — when the cold tier is enabled, route its kv_cold_* counters
     // to the same Registry::Default() the pinned-tier metrics + /metrics
     // scrape use, unless the caller already pointed it elsewhere.
@@ -313,6 +323,14 @@ int HeadlessNode::Lookup(const char* /*tenant_id*/,
         art_ref, {tokens, n}, tenant_hash, model_id_hash, g);
     if (r.matched_tokens == 0 || !r.leaf) {
         span.SetAttribute("kv.hit", false);
+        // SS-2 spine spike, Task 5 — miss seam. No locator was resolved (the
+        // LPM found nothing), so project a minimal SK_KV identity; the KV
+        // policy ignores `id` in onMiss(). Return code is unchanged
+        // (KV_E_NOT_FOUND -> engine recomputes); this call only documents
+        // that the miss path consults the policy.
+        kvcache::common::StateIdentity miss_sid{};
+        miss_sid.state_kind = kvcache::common::SK_KV;
+        policy_reg_.of(kvcache::common::SK_KV).onMiss(miss_sid);
         return KV_E_NOT_FOUND;
     }
     span.SetAttribute("kv.hit", true);
@@ -475,6 +493,12 @@ int HeadlessNode::FetchWithPriority(kv_handle_t handle, uint64_t tenant_hash,
     std::string err;
     auto f = tm_->Fetch(key, &err);
     if (f.hit == node::tier::TierManager::FetchHit::kMiss) {
+        // SS-2 spine spike, Task 5 — miss seam. st.locator is available here
+        // (the read handle's identity), so project the real SK_KV identity.
+        // Return code is unchanged (KV_E_NOT_FOUND -> engine recomputes).
+        kvcache::common::StateIdentity sid =
+            kvcache::common::StateIdentityFromLocator(st.locator);
+        policy_reg_.of(kvcache::common::SK_KV).onMiss(sid);
         return KV_E_NOT_FOUND;
     }
     // Loopback NIXL transfer into the caller's dst buffer.
@@ -560,6 +584,30 @@ int HeadlessNode::Wait(kv_completion_t /*cid*/, uint32_t /*timeout_ms*/) {
 int HeadlessNode::SealCommit(
     kv_handle_t handle, const HandleState& st,
     const std::vector<node::prefix::ChunkHash>& chunk_path) {
+
+    // SS-2 spine spike, Task 5 — store seam. Project the KV identity and
+    // consult the policy before the unconditional stage below. cost{} is
+    // zeroed (no telemetry yet -> recompute_cost_ms == 0), which
+    // ValuePolicyKv::shouldStore treats as "unknown cost" and returns true,
+    // preserving today's unconditional-store behavior exactly. This branch
+    // is therefore unreachable today; it is wired for future activation once
+    // real fetch/recompute cost telemetry feeds the CostModel.
+    {
+        kvcache::common::StateIdentity sid =
+            kvcache::common::StateIdentityFromLocator(st.locator);
+        kvcache::common::CostModel cost{};
+        if (!policy_reg_.of(kvcache::common::SK_KV).shouldStore(sid, cost)) {
+            // Economic decline path. Mirror SealCommit's existing cleanup
+            // tail exactly (see bottom of this function) so no pinned-tier
+            // slot leaks, then report the D-PERF-1 trip.
+            wm_->Drop(st.ingest_handle);
+            buffers_->Release(st.ingest_handle);
+            BumpPinnedTierGauges(tm_.get());
+            std::lock_guard lk(mu_);
+            handles_.erase(handle);
+            return KV_E_SAFETY_NET;
+        }
+    }
 
     // Stage the slot bytes into DRAM so the next Lookup→Fetch can serve from
     // T2. We don't have a structured KV layout in MVP — the bytes are just

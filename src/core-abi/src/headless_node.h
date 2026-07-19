@@ -26,9 +26,12 @@
 #include "prefix/art_wal.h"
 #include "prefix/kv_event_stream.h"
 #include "prefix/lpm.h"
+#include "state_identity.h"   // SS-2 spine spike, Task 5 — StateIdentity / SK_KV
 #include "tier/tier_manager.h"
 #include "transport/nixl_wrapper.h"
 #include "transport/priority_scheduler.h"
+#include "value_policy.h"     // SS-2 spine spike, Task 5 — ValuePolicyRegistry
+#include "value_policy_kv.h"  // SS-2 spine spike, Task 5 — ValuePolicyKv
 
 namespace kvcache::abi {
 
@@ -203,7 +206,14 @@ class HeadlessNode {
     void RefreshArtGauges();
 
    private:
-    HeadlessNode() = default;
+    // SS-2 spine spike, Task 5 — register the KV value policy so the hot
+    // path (SealCommit / Lookup / FetchWithPriority) can route store/evict/
+    // miss decisions through policy_reg_.of(SK_KV) instead of inline logic.
+    HeadlessNode() {
+        policy_reg_.registerPolicy(
+            kvcache::common::SK_KV,
+            std::make_unique<kvcache::common::ValuePolicyKv>());
+    }
 
     bool Init(const Options& opts, std::string* err);
 
@@ -243,6 +253,13 @@ class HeadlessNode {
     std::unique_ptr<node::prefix::ArtWal>              art_wal_;
     std::unique_ptr<node::prefix::EventStream>         events_;
     std::unique_ptr<node::transport::NixlWrapper>      nixl_;
+
+    // SS-2 spine spike, Task 5 — state_kind-keyed ValuePolicy registry.
+    // Registered with SK_KV -> ValuePolicyKv in the constructor above.
+    // Consulted (not yet acted on economically) by the store/evict/miss
+    // seams on the hot path; see SealCommit, DramTier::EvictToFit (via
+    // Options::evict_policy), Lookup, and FetchWithPriority.
+    kvcache::common::ValuePolicyRegistry policy_reg_;
 
     // ----- event subscription bookkeeping (Phase M-2) -----
     struct EventSub {

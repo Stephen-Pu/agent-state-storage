@@ -7,6 +7,8 @@ add_library(kvcache_common STATIC
     log_sink.cpp         # JSON-line ConsoleLogger backend (Phase O-1, merged O-2)
     metrics.cpp
     trace.cpp            # OTel-shaped tracing facade (Phase J-1)
+    value_policy_kv.cpp  # SS-2 spine spike, Task 5 — hot path (headless_node,
+                         # dram_tier) now links ValuePolicyKv via this lib.
 )
 
 # Sibling lib that ships the OTLP/HTTP exporter (Phase J-2). Kept out of

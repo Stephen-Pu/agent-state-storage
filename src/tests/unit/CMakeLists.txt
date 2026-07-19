@@ -349,18 +349,20 @@ kvcache_add_test(test_value_policy_registry policy/value_policy_registry_test.cp
 # SS-2 spine spike, Task 3 — ValuePolicyKv (first-implements D-PERF-1
 # economic shouldStore). Header-only interface + one small TU; needs only
 # core/common include path (already provided by kvcache_add_test).
+# Task 5 — value_policy_kv.cpp now lives in kvcache_common (the hot path
+# links it too), so it's no longer compiled as an extra source here;
+# doing so would duplicate-define its symbols against the kvcache_common
+# link below.
 kvcache_add_test(test_value_policy_kv
-                  policy/value_policy_kv_test.cpp
-                  ${CMAKE_SOURCE_DIR}/core/common/value_policy_kv.cpp)
+                  policy/value_policy_kv_test.cpp)
 
 # SS-2 spine spike, Task 4 — the Q3 validation core: one ValuePolicyRegistry
 # admits two OPPOSITE-semantics policies (ValuePolicyKv = A-class,
 # ValuePolicyPersistentStub = B-class, header-only) with one-line
-# registration each and zero spine change. Links value_policy_kv.cpp for the
-# A-side implementation; the B-side stub is header-only.
+# registration each and zero spine change. ValuePolicyKv's implementation
+# comes from kvcache_common (Task 5); the B-side stub is header-only.
 kvcache_add_test(test_value_policy_ab_contrast
-                  policy/value_policy_ab_contrast_test.cpp
-                  ${CMAKE_SOURCE_DIR}/core/common/value_policy_kv.cpp)
+                  policy/value_policy_ab_contrast_test.cpp)
 kvcache_add_test(test_node_runtime      runtime/node_runtime_test.cpp
                  ${KVCACHE_NODE_SRC}/runtime/node_runtime.cpp
                  ${KVCACHE_NODE_SRC}/security/regulated_mode.cpp
@@ -553,6 +555,28 @@ target_link_libraries(test_seal_by_chunk_path PRIVATE
                   CURL::libcurl)
 if(OpenSSL_FOUND)
     target_link_libraries(test_seal_by_chunk_path PRIVATE OpenSSL::Crypto)
+endif()
+
+# SS-2 spine spike, Task 5 — hot-path seam test. Proves the store/miss seams
+# wired into SealCommit / Lookup / FetchWithPriority are behavior-preserving.
+# Mirrors test_seal_by_chunk_path: compiles headless_node.cpp directly so the
+# non-ABI C++ symbols are reachable without going through the kvcache dylib's
+# public C surface. ValuePolicyKv's implementation comes from kvcache_common
+# (linked below), which now carries value_policy_kv.cpp (Task 5).
+kvcache_add_test(test_hot_path_seam
+                  policy/hot_path_seam_test.cpp
+                  ${CMAKE_SOURCE_DIR}/core-abi/src/headless_node.cpp
+                  ${CMAKE_SOURCE_DIR}/core-abi/src/ctx_options.cpp
+                  ${CMAKE_SOURCE_DIR}/core-abi/src/kv_status.cpp)
+target_include_directories(test_hot_path_seam PRIVATE
+                  ${CMAKE_SOURCE_DIR}/core-abi/src
+                  ${KVCACHE_NODE_SRC})
+target_link_libraries(test_hot_path_seam PRIVATE
+                  kvstore_node_core
+                  kvcache_common
+                  CURL::libcurl)
+if(OpenSSL_FOUND)
+    target_link_libraries(test_hot_path_seam PRIVATE OpenSSL::Crypto)
 endif()
 
 # Task 3 — A9 DR warm-standby: WarmSetFilter (header-only predicate).

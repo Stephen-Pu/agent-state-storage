@@ -5,11 +5,19 @@
 
 namespace kvcache::node::tier {
 
+namespace {
+// SS-2 spine spike, Task 5 — mirrors kvcache::node::prefix::Tier::Dram
+// (kv_event_stream.h). Not included directly to avoid a new
+// tier/ -> prefix/ header dependency for one integer literal.
+constexpr int kDramTierId = 3;
+}  // namespace
+
 DramTier::DramTier(const Options& opts)
     : capacity_bytes_(opts.capacity_bytes),
       a1in_capacity_(opts.capacity_bytes / 4),
       a1out_max_   (opts.a1out_max_entries),
-      on_evict_    (opts.on_evict) {}
+      on_evict_    (opts.on_evict),
+      evict_policy_(opts.evict_policy) {}
 
 DramTier::~DramTier() = default;
 
@@ -135,6 +143,21 @@ void DramTier::GhostInsert(const DramKey& key) {
     }
 }
 
+// SS-2 spine spike, Task 5 — evict seam. DramTier entries carry only a
+// content-address DramKey, no locator to project a real StateIdentity from;
+// this spike uses SK_KV (the KV policy is kind-agnostic in shouldEvict —
+// see value_policy_kv.cpp). Returns true if the caller must NOT evict this
+// victim right now (kNotEvictable); false (the common case: no policy
+// injected, or the policy allows it) preserves today's unconditional-evict
+// behavior exactly.
+bool DramTier::IsNotEvictable() const {
+    if (!evict_policy_) return false;
+    kvcache::common::StateIdentity sid{};
+    sid.state_kind = kvcache::common::SK_KV;
+    return evict_policy_->shouldEvict(sid, kDramTierId) ==
+           kvcache::common::EvictDecision::kNotEvictable;
+}
+
 void DramTier::EvictToFit(std::size_t incoming_bytes) {
     // Bring A1in within budget first (it's where new entries land; if the new
     // entry is going to Am it still has to share the global capacity).
@@ -142,6 +165,12 @@ void DramTier::EvictToFit(std::size_t incoming_bytes) {
     // can push existing A1in tails into the ghost queue.
     while (!a1in_.empty() &&
            a1in_bytes_used_ + incoming_bytes > a1in_capacity_) {
+        // kNotEvictable is demote-only (this tier has no colder-tier
+        // handoff of its own — TierManager handles cross-tier demotion),
+        // so we stop this eviction pass rather than discard the victim.
+        // Unreached today: ValuePolicyKv::shouldEvict always returns
+        // kEvictable, so the SAME victims are evicted as before this seam.
+        if (IsNotEvictable()) break;
         // Evict the FIFO tail of A1in into the ghost queue.
         const Entry& victim = a1in_.back();
         const DramKey evicted_key = victim.key;
@@ -154,6 +183,7 @@ void DramTier::EvictToFit(std::size_t incoming_bytes) {
     // Now ensure overall capacity is honored. Prefer evicting from Am tail
     // (true LRU) once A1in is at its budget.
     while (a1in_bytes_used_ + am_bytes_used_ + incoming_bytes > capacity_bytes_) {
+        if (IsNotEvictable()) break;  // see note above
         if (!am_.empty()) {
             const Entry& victim = am_.back();
             const DramKey evicted_key = victim.key;
