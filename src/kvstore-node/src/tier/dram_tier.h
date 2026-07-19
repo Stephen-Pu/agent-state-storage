@@ -179,6 +179,15 @@ class DramTier {
 
     // SS-2 B-plane spike, Task 2 — evict seam (see Options::policy_registry).
     kvcache::common::ValuePolicyRegistry* registry_ = nullptr;
+
+    // White-box test seam (SS-2 B-plane spike, Task 5). A B-class
+    // NOT_EVICTABLE entry cannot reach Am through the public API today
+    // (Am admission requires a ghost hit, which requires a prior A1in
+    // eviction, and B is never evicted from A1in), so the Am-fallback path
+    // in EvictToFit is unreachable via Insert/Lookup. This peer lets the
+    // eviction test inject entries directly into a1in_/am_ and drive
+    // EvictToFit to cover that path. Test-only; no runtime cost.
+    friend class DramTierTestPeer;
 };
 
 }  // namespace kvcache::node::tier

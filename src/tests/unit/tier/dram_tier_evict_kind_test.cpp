@@ -209,3 +209,122 @@ TEST(DramTierKind, AllNotEvictableStopsCleanlyNoHang) {
     ASSERT_TRUE(t.KindOf(k2).has_value());
     EXPECT_EQ(*t.KindOf(k2), static_cast<uint16_t>(SK_MEMORY));
 }
+
+// Task 5 — white-box peer. A NOT_EVICTABLE (B-class) entry cannot reach Am
+// through the public API today (Am admission requires a ghost hit, which
+// requires a prior A1in eviction, and B is never evicted from A1in), so the
+// second EvictToFit loop's Am→A1in fallback is unreachable via Insert/Lookup.
+// This peer injects entries directly into the private a1in_/am_ lists and
+// drives EvictToFit so the fallback can be exercised. DramTier befriends it.
+namespace kvcache::node::tier {
+class DramTierTestPeer {
+   public:
+    explicit DramTierTestPeer(DramTier& t) : t_(t) {}
+
+    void PushAm(const DramKey& k, std::size_t n, uint16_t kind) {
+        t_.am_.push_front(DramTier::Entry{
+            k, DramTier::Queue::Am, std::vector<uint8_t>(n, 0), kind});
+        t_.index_[k] = t_.am_.begin();
+        t_.am_bytes_used_ += n;
+    }
+    void PushA1in(const DramKey& k, std::size_t n, uint16_t kind) {
+        t_.a1in_.push_front(DramTier::Entry{
+            k, DramTier::Queue::A1in, std::vector<uint8_t>(n, 0), kind});
+        t_.index_[k] = t_.a1in_.begin();
+        t_.a1in_bytes_used_ += n;
+    }
+    void CallEvictToFit(std::size_t incoming) { t_.EvictToFit(incoming); }
+
+    uint64_t AmBytes()   const { return t_.am_bytes_used_; }
+    uint64_t A1inBytes() const { return t_.a1in_bytes_used_; }
+
+   private:
+    DramTier& t_;
+};
+}  // namespace kvcache::node::tier
+
+using kvcache::node::tier::DramTierTestPeer;
+
+// Task 5 — the Am-fallback correctness case (the whole-branch review's one
+// Important finding). Loop 2 of EvictToFit prefers Am (true LRU); when Am is
+// non-empty but EVERY Am entry is NOT_EVICTABLE, it must fall through to A1in
+// and evict an evictable entry there — NOT break out of the loop leaving
+// reclaimable A1in space untouched (which would keep the tier over budget).
+//
+// Setup is chosen so loop 1 (A1in budget) does NOT fire — only loop 2 does —
+// isolating the Am→A1in fallback:
+//   capacity = 400, a1in budget = 100 (25%).
+//   A1in: one evictable SK_KV entry of 50 bytes  (a1in_used = 50).
+//   Am:   one NOT_EVICTABLE SK_MEMORY entry of 340 bytes (am_used = 340).
+//   EvictToFit(incoming = 40):
+//     loop 1: 50 + 40 = 90 <= 100 → does not fire (A1in entry survives loop 1).
+//     loop 2: 50 + 340 + 40 = 430 > 400 → fires. Am's only entry is
+//             NOT_EVICTABLE → old code would break here (BUG). New code falls
+//             through to A1in, evicts the 50-byte SK_KV entry → 0 + 340 + 40 =
+//             380 <= 400 → loop exits.
+// Under the OLD code this test fails: the A1in entry stays resident.
+TEST(DramTierKind, AmAllNotEvictableFallsBackToA1in) {
+    ValuePolicyRegistry reg;
+    reg.registerPolicy(SK_MEMORY, std::make_unique<ValuePolicyPersistentStub>());
+    reg.registerPolicy(SK_KV, std::make_unique<ValuePolicyKv>());
+
+    DramTier::Options o;
+    o.capacity_bytes    = 400;
+    o.a1out_max_entries = 16;
+    o.policy_registry   = &reg;
+    DramTier t(o);
+
+    DramTierTestPeer peer(t);
+    DramKey am_b{};    // NOT_EVICTABLE, resides in Am
+    am_b.bytes[0] = 1;
+    DramKey a1_a{};    // evictable, resides in A1in
+    a1_a.bytes[0] = 2;
+
+    peer.PushAm(am_b, 340, SK_MEMORY);
+    peer.PushA1in(a1_a, 50, SK_KV);
+    ASSERT_EQ(peer.AmBytes(), 340u);
+    ASSERT_EQ(peer.A1inBytes(), 50u);
+
+    // Drives loop 2 only (loop 1 stays within the 100-byte A1in budget).
+    peer.CallEvictToFit(40);
+
+    // The NOT_EVICTABLE Am entry survives; the evictable A1in entry is the
+    // fallback victim — proving loop 2 did not break on Am-not-found.
+    ASSERT_TRUE(t.KindOf(am_b).has_value());
+    EXPECT_EQ(*t.KindOf(am_b), static_cast<uint16_t>(SK_MEMORY));
+    EXPECT_FALSE(t.KindOf(a1_a).has_value());
+    EXPECT_EQ(peer.AmBytes(), 340u);
+    EXPECT_EQ(peer.A1inBytes(), 0u);
+}
+
+// Task 5 — companion no-hang case for the fallback: BOTH queues hold only
+// NOT_EVICTABLE entries and capacity is exceeded via loop 2. Neither Am nor
+// the A1in fallback yields a victim, so EvictToFit must stop cleanly (capacity
+// unsatisfied) rather than spin. Same non-loop-1 setup as above.
+TEST(DramTierKind, AmAndA1inAllNotEvictableStopsCleanlyNoHang) {
+    ValuePolicyRegistry reg;
+    reg.registerPolicy(SK_MEMORY, std::make_unique<ValuePolicyPersistentStub>());
+
+    DramTier::Options o;
+    o.capacity_bytes    = 400;
+    o.a1out_max_entries = 16;
+    o.policy_registry   = &reg;
+    DramTier t(o);
+
+    DramTierTestPeer peer(t);
+    DramKey am_b{};
+    am_b.bytes[0] = 1;
+    DramKey a1_b{};
+    a1_b.bytes[0] = 2;
+
+    peer.PushAm(am_b, 340, SK_MEMORY);
+    peer.PushA1in(a1_b, 50, SK_MEMORY);  // also NOT_EVICTABLE
+
+    peer.CallEvictToFit(40);  // must return, not hang
+
+    // Both survive — nothing was evictable in either queue.
+    ASSERT_TRUE(t.KindOf(am_b).has_value());
+    ASSERT_TRUE(t.KindOf(a1_b).has_value());
+    EXPECT_EQ(peer.AmBytes(), 340u);
+    EXPECT_EQ(peer.A1inBytes(), 50u);
+}

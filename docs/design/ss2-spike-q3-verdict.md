@@ -205,14 +205,22 @@ since `dd2e55f..a5c05bb`:
   victim, evict the first evictable one, and `break` cleanly if none remains
   (no infinite loop — the exact hazard a naive `break→continue` swap would hit).
   `GhostInsert` still fires on A1in evictions only, not Am.
+- Loop 2 (overall-capacity) treats **Am yielding no evictable victim** (empty,
+  *or* non-empty but every entry `NOT_EVICTABLE`) as a fall-through to A1in, not
+  a stop — it breaks only when *neither* queue has an evictable victim. This
+  matters once a B-class entry can reside in Am: otherwise reclaimable A1in
+  space would be stranded and the tier left over budget. (Whole-branch review
+  finding; fixed in Task 5 with a white-box test that injects a `NOT_EVICTABLE`
+  entry directly into Am — a path unreachable through the public API today.)
 - **KV victim selection is byte-identical** to the old `pop_back()` path: when
   every entry is evictable the reverse walk lands on the tail on its first step.
 
-Verified: **540/540** (`cmake --build . -j4 && ctest --output-on-failure`,
+Verified: **542/542** (`cmake --build . -j4 && ctest --output-on-failure`,
 0 failed; the 15 pre-existing hardware/endpoint skips unchanged), including the
 order/callback-sensitive `DramTierTest.CapacityIsEnforced` and
-`OnEvictFiresForA1inAndAmDrops`, plus three new discriminating tests
-(`DramTierKind.*`: KV-still-evicts, skip-not-evictable, all-not-evictable-no-hang).
+`OnEvictFiresForA1inAndAmDrops`, plus five discriminating `DramTierKind.*` tests
+(KV-still-evicts, skip-not-evictable, all-not-evictable-no-hang, and the two
+Task-5 Am-fallback cases: fall-back-to-A1in and both-queues-no-hang).
 Whole-branch review independently rebuilt and re-ran the suite and hand-traced
 KV byte-identity, per-queue bookkeeping, termination-by-construction, and
 iterator safety — no Critical/Important findings.

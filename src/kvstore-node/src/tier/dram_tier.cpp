@@ -199,15 +199,19 @@ void DramTier::EvictToFit(std::size_t incoming_bytes) {
     // Now ensure overall capacity is honored. Prefer evicting from Am tail
     // (true LRU) once A1in is at its budget.
     while (a1in_bytes_used_ + am_bytes_used_ + incoming_bytes > capacity_bytes_) {
-        // Prefer evicting from Am tail (true LRU) once A1in is at its
-        // budget, falling back to A1in once Am is empty. Within whichever
-        // queue is being considered, walk tail-to-front skipping
-        // NOT_EVICTABLE entries and evict the first evictable one found.
-        // A full pass with nothing evictable stops the loop (capacity
-        // intentionally unsatisfied) rather than spinning. When every
-        // entry is evictable (KV path), the walk finds the tail
-        // immediately, so victim + order are byte-identical to the
-        // previous pop_back()-only behavior.
+        // Prefer evicting from Am tail (true LRU) once A1in is at its budget,
+        // falling back to A1in. Within whichever queue is being considered,
+        // walk tail-to-front skipping NOT_EVICTABLE entries and evict the
+        // first evictable one found. Crucially, Am yielding no evictable
+        // victim (empty, OR non-empty but every entry NOT_EVICTABLE) is NOT a
+        // stop condition — we fall through to A1in in the same pass. We only
+        // break when NEITHER queue has an evictable victim (capacity
+        // intentionally unsatisfied) rather than spinning. When every entry is
+        // evictable (KV path), Am is non-empty → the walk finds am_.back()
+        // immediately and A1in is skipped, so victim + order are byte-identical
+        // to the previous pop_back()-only behavior.
+        bool evicted = false;
+
         if (!am_.empty()) {
             auto it = am_.end();
             bool found = false;
@@ -215,29 +219,35 @@ void DramTier::EvictToFit(std::size_t incoming_bytes) {
                 --it;
                 if (!IsNotEvictable(*it)) { found = true; break; }
             }
-            if (!found) break;  // nothing evictable in Am → stop, no hang
-            const DramKey evicted_key = it->key;
-            am_bytes_used_ -= it->data.size();
-            index_.erase(it->key);
-            am_.erase(it);
-            if (on_evict_) on_evict_(evicted_key);
-        } else if (!a1in_.empty()) {
+            if (found) {
+                const DramKey evicted_key = it->key;
+                am_bytes_used_ -= it->data.size();
+                index_.erase(it->key);
+                am_.erase(it);
+                if (on_evict_) on_evict_(evicted_key);
+                evicted = true;
+            }
+        }
+
+        if (!evicted && !a1in_.empty()) {
             auto it = a1in_.end();
             bool found = false;
             while (it != a1in_.begin()) {
                 --it;
                 if (!IsNotEvictable(*it)) { found = true; break; }
             }
-            if (!found) break;  // nothing evictable in A1in → stop, no hang
-            const DramKey evicted_key = it->key;
-            a1in_bytes_used_ -= it->data.size();
-            GhostInsert(it->key);
-            index_.erase(it->key);
-            a1in_.erase(it);
-            if (on_evict_) on_evict_(evicted_key);
-        } else {
-            break;  // nothing left to evict
+            if (found) {
+                const DramKey evicted_key = it->key;
+                a1in_bytes_used_ -= it->data.size();
+                GhostInsert(it->key);
+                index_.erase(it->key);
+                a1in_.erase(it);
+                if (on_evict_) on_evict_(evicted_key);
+                evicted = true;
+            }
         }
+
+        if (!evicted) break;  // neither queue had an evictable victim → no hang
     }
 }
 
