@@ -9,6 +9,9 @@ add_library(kvcache_common STATIC
     trace.cpp            # OTel-shaped tracing facade (Phase J-1)
     value_policy_kv.cpp  # SS-2 spine spike, Task 5 — hot path (headless_node,
                          # dram_tier) now links ValuePolicyKv via this lib.
+    value_policy_tool_result.cpp  # A-plane generalization, Task 3 — headless_node
+                                   # registers SK_TOOL_RESULT -> ValuePolicyToolResult,
+                                   # so it must resolve the same way ValuePolicyKv does.
 )
 
 # Sibling lib that ships the OTLP/HTTP exporter (Phase J-2). Kept out of

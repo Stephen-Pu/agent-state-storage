@@ -32,6 +32,7 @@
 #include "transport/priority_scheduler.h"
 #include "value_policy.h"     // SS-2 spine spike, Task 5 — ValuePolicyRegistry
 #include "value_policy_kv.h"  // SS-2 spine spike, Task 5 — ValuePolicyKv
+#include "value_policy_tool_result.h"  // A-plane generalization, Task 3 — ValuePolicyToolResult
 
 namespace kvcache::abi {
 
@@ -209,10 +210,17 @@ class HeadlessNode {
     // SS-2 spine spike, Task 5 — register the KV value policy so the hot
     // path (SealCommit / Lookup / FetchWithPriority) can route store/evict/
     // miss decisions through policy_reg_.of(SK_KV) instead of inline logic.
+    // A-plane generalization, Task 3 — SK_TOOL_RESULT is registered right
+    // after SK_KV as the 3rd policy in the same registry. This is the
+    // generalization proof: one more registerPolicy line, zero hot-path
+    // change (SealCommit/Lookup/FetchWithPriority/EvictToFit are untouched).
     HeadlessNode() {
         policy_reg_.registerPolicy(
             kvcache::common::SK_KV,
             std::make_unique<kvcache::common::ValuePolicyKv>());
+        policy_reg_.registerPolicy(
+            kvcache::common::SK_TOOL_RESULT,
+            std::make_unique<kvcache::common::ValuePolicyToolResult>());
     }
 
     bool Init(const Options& opts, std::string* err);
