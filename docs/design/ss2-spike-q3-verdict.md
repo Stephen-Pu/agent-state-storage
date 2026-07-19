@@ -223,7 +223,10 @@ order/callback-sensitive `DramTierTest.CapacityIsEnforced` and
 Task-5 Am-fallback cases: fall-back-to-A1in and both-queues-no-hang).
 Whole-branch review independently rebuilt and re-ran the suite and hand-traced
 KV byte-identity, per-queue bookkeeping, termination-by-construction, and
-iterator safety — no Critical/Important findings.
+iterator safety. It raised **one Important (latent) finding** — the loop-2
+Am→A1in fallback gap described above — which was fixed in Task 5; a focused
+re-review of that fix confirmed KV byte-identity and test discrimination with
+no Critical/Important findings.
 
 **Still deferred:** the DRAM *store* path that would admit a B-class entry in
 the first place — the real B-plane ingest. This landed only the eviction half.
