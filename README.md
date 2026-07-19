@@ -161,7 +161,8 @@ Traced projection; assumptions & math in HLD §1.3 / v2.0 §13.7. High-prefix-sh
 
 The five things that make it work are exactly primitives 1–6 above, made real:
 **identity-addressed prefix reuse · KV-aware routing (hit rate doesn't decay with cluster size) ·
-five-tier storage · a runtime `store-vs-recompute` safety-net that refuses to lose to recompute ·
+five-tier storage · a `store-vs-recompute` economic gate wired into the store path (built in — not
+outsourced to an external scheduler like KVBM; activation pending cost telemetry) ·
 server-pull-only NIXL for true multi-tenant QoS.** All vendor-neutral, across vLLM / SGLang / TRT-LLM / AIBrix.
 
 ---
@@ -172,7 +173,7 @@ We publish exactly what is built and what is not. This table is the contract, an
 
 | State type | Plane | Shipped | Roadmap |
 | :--------- | :---: | :-----: | :------ |
-| **KV cache** | A | ✅ identity addressing · 5-tier · KV-routing · economic brain · hard multi-tenancy · vendor-neutral | — |
+| **KV cache** | A | ✅ identity addressing · 5-tier · KV-routing · hard multi-tenancy · vendor-neutral · economic gate *(wired; activation pending cost telemetry)* | — |
 | Sandbox snapshot | A | — | P2 · reuses the spine |
 | Embedding / RAG-chunk | A | — | P2 · reuses the spine |
 | Tool-result memoization | A | — | P2 · idempotent-only |
