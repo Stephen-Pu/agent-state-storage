@@ -197,15 +197,14 @@ bool HeadlessNode::Init(const Options& opts, std::string* err) {
         tier_opts.dram.on_evict =
             [this](const node::tier::DramKey& k) { this->OnDramEvict(k); };
     }
-    // SS-2 spine spike, Task 5 — evict seam. Inject the registered SK_KV
-    // policy so DramTier::EvictToFit asks the policy before discarding a
-    // victim. policy_reg_ was populated with SK_KV in the constructor
-    // (before Init() runs), so of(SK_KV) is always valid here; the
-    // reference is stable for HeadlessNode's lifetime (same lifetime as
-    // tm_/dram_).
-    if (!tier_opts.dram.evict_policy) {
-        tier_opts.dram.evict_policy =
-            &policy_reg_.of(kvcache::common::SK_KV);
+    // SS-2 B-plane spike, Task 2 — evict seam. Inject the whole registry
+    // (not just the SK_KV policy) so DramTier::EvictToFit dispatches by
+    // each entry's own state_kind via registry_->of(kind)/has(kind).
+    // policy_reg_ already carries SK_KV + SK_TOOL_RESULT from the
+    // constructor and is stable for HeadlessNode's lifetime (same
+    // lifetime as tm_/dram_), so this pointer never dangles.
+    if (!tier_opts.dram.policy_registry) {
+        tier_opts.dram.policy_registry = &policy_reg_;
     }
     // Phase O-4 — when the cold tier is enabled, route its kv_cold_* counters
     // to the same Registry::Default() the pinned-tier metrics + /metrics

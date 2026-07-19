@@ -17,7 +17,7 @@ DramTier::DramTier(const Options& opts)
       a1in_capacity_(opts.capacity_bytes / 4),
       a1out_max_   (opts.a1out_max_entries),
       on_evict_    (opts.on_evict),
-      evict_policy_(opts.evict_policy) {}
+      registry_    (opts.policy_registry) {}
 
 DramTier::~DramTier() = default;
 
@@ -152,18 +152,17 @@ void DramTier::GhostInsert(const DramKey& key) {
     }
 }
 
-// SS-2 spine spike, Task 5 — evict seam. DramTier entries carry only a
-// content-address DramKey, no locator to project a real StateIdentity from;
-// this spike uses SK_KV (the KV policy is kind-agnostic in shouldEvict —
-// see value_policy_kv.cpp). Returns true if the caller must NOT evict this
-// victim right now (kNotEvictable); false (the common case: no policy
-// injected, or the policy allows it) preserves today's unconditional-evict
-// behavior exactly.
-bool DramTier::IsNotEvictable() const {
-    if (!evict_policy_) return false;
+// SS-2 B-plane spike, Task 2 — evict seam. Dispatches by the victim
+// entry's own state_kind (Entry::state_kind, Task 1) through the registry,
+// dropping the earlier spike's synthetic SK_KV-only projection. Returns
+// true if the caller must NOT evict this victim right now (kNotEvictable);
+// false (no registry injected, no policy registered for this kind, or the
+// policy allows it) preserves today's unconditional-evict behavior exactly.
+bool DramTier::IsNotEvictable(const Entry& e) const {
+    if (!registry_ || !registry_->has(e.state_kind)) return false;
     kvcache::common::StateIdentity sid{};
-    sid.state_kind = kvcache::common::SK_KV;
-    return evict_policy_->shouldEvict(sid, kDramTierId) ==
+    sid.state_kind = e.state_kind;
+    return registry_->of(e.state_kind).shouldEvict(sid, kDramTierId) ==
            kvcache::common::EvictDecision::kNotEvictable;
 }
 
@@ -189,7 +188,7 @@ void DramTier::EvictToFit(std::size_t incoming_bytes) {
         // front for the first evictable candidate + a termination
         // condition, or a demotion hand-off), not a keyword swap. Unreached
         // today (KV -> kEvictable).
-        if (IsNotEvictable()) break;
+        if (IsNotEvictable(a1in_.back())) break;
         // Evict the FIFO tail of A1in into the ghost queue.
         const Entry& victim = a1in_.back();
         const DramKey evicted_key = victim.key;
@@ -212,8 +211,8 @@ void DramTier::EvictToFit(std::size_t incoming_bytes) {
         // termination condition, or a demotion hand-off) when B-class
         // NOT_EVICTABLE entries can actually land in DRAM, not a keyword
         // swap. Unreached today (KV -> kEvictable).
-        if (IsNotEvictable()) break;  // see note above
         if (!am_.empty()) {
+            if (IsNotEvictable(am_.back())) break;  // see note above
             const Entry& victim = am_.back();
             const DramKey evicted_key = victim.key;
             am_bytes_used_ -= victim.data.size();
@@ -221,6 +220,7 @@ void DramTier::EvictToFit(std::size_t incoming_bytes) {
             am_.pop_back();
             if (on_evict_) on_evict_(evicted_key);
         } else if (!a1in_.empty()) {
+            if (IsNotEvictable(a1in_.back())) break;  // see note above
             const Entry& victim = a1in_.back();
             const DramKey evicted_key = victim.key;
             a1in_bytes_used_ -= victim.data.size();

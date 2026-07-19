@@ -249,17 +249,19 @@ class HeadlessNode {
     std::unordered_map<kv_handle_t, HandleState> handles_;
     std::atomic<kv_handle_t> next_handle_{1};
 
-    // SS-2 spine spike, Task 5 — state_kind-keyed ValuePolicy registry.
-    // Registered with SK_KV -> ValuePolicyKv in the constructor above.
+    // SS-2 spine spike, Task 5 / B-plane spike, Task 2 — state_kind-keyed
+    // ValuePolicy registry. Registered with SK_KV -> ValuePolicyKv and
+    // SK_TOOL_RESULT -> ValuePolicyToolResult in the constructor above.
     // Consulted (not yet acted on economically) by the store/evict/miss
     // seams on the hot path; see SealCommit, DramTier::EvictToFit (via
-    // Options::evict_policy), Lookup, and FetchWithPriority.
+    // Options::policy_registry, dispatched per-entry by state_kind),
+    // Lookup, and FetchWithPriority.
     //
-    // Declared BEFORE tm_ so the ValuePolicyRegistry (and the
-    // ValuePolicyKv it owns) outlives DramTier's non-owning
-    // evict_policy_ pointer (Init() hands DramTier `&policy_reg_.of(SK_KV)`).
-    // Members are destroyed in reverse declaration order, so this ordering
-    // is what guarantees policy_reg_ is torn down after tm_/DramTier.
+    // Declared BEFORE tm_ so the ValuePolicyRegistry (and the policies it
+    // owns) outlives DramTier's non-owning registry_ pointer (Init() hands
+    // DramTier `&policy_reg_`). Members are destroyed in reverse
+    // declaration order, so this ordering is what guarantees policy_reg_
+    // is torn down after tm_/DramTier.
     kvcache::common::ValuePolicyRegistry policy_reg_;
 
     // Subsystems.

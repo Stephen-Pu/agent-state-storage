@@ -38,7 +38,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "value_policy.h"  // SS-2 spine spike, Task 5 — evict seam (ValuePolicy)
+#include "value_policy.h"  // evict seam (ValuePolicy, ValuePolicyRegistry)
 
 namespace kvcache::node::tier {
 
@@ -72,18 +72,20 @@ class DramTier {
         uint64_t  capacity_bytes      = 16ull << 30;  // 16 GiB default
         uint32_t  a1out_max_entries   = 200000;       // ghost queue, key-only
         OnEvictFn on_evict;                           // optional
-        // SS-2 spine spike, Task 5 — evict seam. When set, EvictToFit
-        // consults this policy before discarding a chosen victim. Entries
-        // here carry only a content-address DramKey (no locator), so the
-        // projected StateIdentity is SK_KV-only for this spike (the KV
-        // policy is kind-agnostic in shouldEvict). Not owned; must outlive
-        // the DramTier. Defaults to nullptr (no gating — today's
-        // unconditional-evict behavior).
+        // SS-2 B-plane spike, Task 2 — evict seam. When set, EvictToFit
+        // dispatches to the policy registered for each entry's own
+        // state_kind (Entry::state_kind, Task 1) before discarding a
+        // chosen victim, instead of the synthetic SK_KV-only projection
+        // this seam started with. Not owned; must outlive the DramTier.
+        // Defaults to nullptr (no gating — today's unconditional-evict
+        // behavior). If set but the entry's kind has no registered policy
+        // (registry_->has() is false), IsNotEvictable also treats it as
+        // evictable (same no-gating default).
         // Pointee is non-const: ValuePolicy's virtual methods (shouldEvict
         // et al.) are not const-qualified (see value_policy.h) — every
         // existing call site (ValuePolicyRegistry::of() included) goes
         // through a non-const reference/pointer.
-        kvcache::common::ValuePolicy* evict_policy = nullptr;
+        kvcache::common::ValuePolicyRegistry* policy_registry = nullptr;
     };
 
     explicit DramTier(const Options& opts);
@@ -152,8 +154,9 @@ class DramTier {
 
     void EvictToFit(std::size_t incoming_bytes);
     void GhostInsert(const DramKey& key);
-    // SS-2 spine spike, Task 5 — evict seam helper (see Options::evict_policy).
-    bool IsNotEvictable() const;
+    // SS-2 B-plane spike, Task 2 — evict seam helper (see
+    // Options::policy_registry). Dispatches by the entry's own state_kind.
+    bool IsNotEvictable(const Entry& e) const;
 
     mutable std::mutex mu_;
 
@@ -174,8 +177,8 @@ class DramTier {
 
     OnEvictFn on_evict_;
 
-    // SS-2 spine spike, Task 5 — evict seam (see Options::evict_policy).
-    kvcache::common::ValuePolicy* evict_policy_ = nullptr;
+    // SS-2 B-plane spike, Task 2 — evict seam (see Options::policy_registry).
+    kvcache::common::ValuePolicyRegistry* registry_ = nullptr;
 };
 
 }  // namespace kvcache::node::tier
