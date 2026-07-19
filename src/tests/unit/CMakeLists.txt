@@ -359,6 +359,14 @@ kvcache_add_test(test_value_policy_registry policy/value_policy_registry_test.cp
 kvcache_add_test(test_value_policy_kv
                   policy/value_policy_kv_test.cpp)
 
+# A-plane generalization, Task 2 — ValuePolicyToolResult (idempotent-only
+# store gate, LLD §2.1c). value_policy_tool_result.cpp is not yet part of
+# kvcache_common (Task 2 doesn't touch the hot path), so it's compiled
+# directly into this test binary.
+kvcache_add_test(test_value_policy_tool_result
+                  policy/value_policy_tool_result_test.cpp
+                  ${CMAKE_SOURCE_DIR}/core/common/value_policy_tool_result.cpp)
+
 # SS-2 spine spike, Task 4 — the Q3 validation core: one ValuePolicyRegistry
 # admits two OPPOSITE-semantics policies (ValuePolicyKv = A-class,
 # ValuePolicyPersistentStub = B-class, header-only) with one-line
