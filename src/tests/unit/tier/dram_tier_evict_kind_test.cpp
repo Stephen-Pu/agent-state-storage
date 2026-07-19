@@ -127,15 +127,10 @@ TEST(DramTierKind, EvictionSkipsNotEvictableAndDropsEvictable) {
 
     std::vector<uint8_t> v(32, 0xCC);
 
-    // Insert order (A1in is push_front, so front = newest, back = oldest):
-    //   evictable_front (kept furthest from tail), not_evictable (middle),
-    //   evictable_tail (inserted last... wait, we want evictable_tail to be
-    //   the OLDEST so it lands at the back/tail first).
-    // A1in capacity is 64 bytes = 2 entries of 32 bytes. We insert 3
-    // entries of 32 bytes each in this order so the tail-to-front order
-    // ends up: [not_evictable, evictable_mid] with evictable_tail already
-    // evicted by capacity pressure from the 3rd insert — instead, build it
-    // explicitly:
+    // A1in is push_front, so front = newest, back = oldest. A1in budget is
+    // 64 bytes = 2 entries of 32 bytes. We insert 3 entries in oldest→newest
+    // order so the tail-to-front layout is [evictable_a (tail), not_evictable,
+    // evictable_b (front)]; the 3rd insert triggers EvictToFit.
     DramKey evictable_a{};  // will end up at the tail (oldest)
     evictable_a.bytes[0] = 1;
     DramKey not_evictable{};  // middle — must survive
