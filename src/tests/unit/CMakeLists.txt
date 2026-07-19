@@ -345,6 +345,13 @@ kvcache_add_test(test_hashing           common/hashing_test.cpp)
 # ValuePolicyRegistry. Header-only; needs only core/common include path
 # (already provided by kvcache_add_test).
 kvcache_add_test(test_value_policy_registry policy/value_policy_registry_test.cpp)
+
+# SS-2 spine spike, Task 3 — ValuePolicyKv (first-implements D-PERF-1
+# economic shouldStore). Header-only interface + one small TU; needs only
+# core/common include path (already provided by kvcache_add_test).
+kvcache_add_test(test_value_policy_kv
+                  policy/value_policy_kv_test.cpp
+                  ${CMAKE_SOURCE_DIR}/core/common/value_policy_kv.cpp)
 kvcache_add_test(test_node_runtime      runtime/node_runtime_test.cpp
                  ${KVCACHE_NODE_SRC}/runtime/node_runtime.cpp
                  ${KVCACHE_NODE_SRC}/security/regulated_mode.cpp
