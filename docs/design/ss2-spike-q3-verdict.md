@@ -50,9 +50,22 @@ calls, not kind-conditional branches:
 | Miss (fetch) | `src/core-abi/src/headless_node.cpp` : `HeadlessNode::FetchWithPriority` (line 501) | `policy_reg_.of(SK_KV).onMiss(sid)` |
 | Evict | `src/kvstore-node/src/tier/dram_tier.cpp` : `DramTier::IsNotEvictable` (line 157; called from `EvictToFit`, line 183) | `evict_policy_->shouldEvict(sid, kDramTierId)` |
 
-Each site resolves the policy by `state_kind` through the registry (or a
-policy pointer injected the same way) and calls one of the three interface
-methods — there is no per-kind conditional logic inlined at the call site.
+Each site resolves the policy through the registry (or a policy pointer
+injected the same way) and calls one of the three interface methods — there
+is no per-kind conditional logic inlined at the call site.
+
+> **Evict-seam caveat (honest scope):** the store and miss seams project a
+> real/known `SK_KV` identity, but `DramTier` entries carry only a 16-byte
+> `DramKey` (no locator/kind), so the evict seam currently **pins a synthetic
+> `SK_KV` identity**. It therefore proves "the evictor asks *a* policy," not
+> "the evictor asks the *right* policy per kind." This is harmless today
+> (`ValuePolicyKv::shouldEvict` ignores the identity and always returns
+> `kEvictable`), but it is the single most important Phase-2 trap: the moment a
+> B-class `NOT_EVICTABLE` entry can land in DRAM, this code would project
+> `SK_KV`, get `kEvictable`, and wrongly discard an irreplaceable entry.
+> **Per-kind evict dispatch (a real `StateIdentity`/kind carried into
+> `DramTier::Entry`) is part of the deferred DramTier eviction restructure**
+> (below) — and must land *before* any B-class entry is admitted to DRAM.
 The kind-specific behavior lives entirely inside the policy implementation
 (`ValuePolicyKv`, `ValuePolicyPersistentStub`), which is exactly the
 separation Q3 asked for.
@@ -136,6 +149,16 @@ Not in scope for this spike; tracked as follow-on work:
 - **`StateIdentity` across the FFI/proto/wire boundary** — this spike keeps
   `StateIdentity` C++-core-only; threading it across the C ABI / gRPC wire
   format is out of scope.
+- **DramTier eviction restructure (B-plane prerequisite)** — two coupled gaps
+  that must both close before any B-class entry is admitted to DRAM: (a)
+  `DramTier::Entry` must carry a real `StateIdentity`/kind so the evict seam
+  dispatches the *correct* policy per victim (today it pins synthetic `SK_KV`
+  — see the evict-seam caveat above); and (b) the `EvictToFit` scan must be
+  restructured so a `NOT_EVICTABLE` victim is *skipped* (walk toward the front
+  for the next evictable candidate + a termination condition, or a demotion
+  hand-off) rather than the current `break` — a naive `break→continue` swap
+  would infinite-loop on the unadvanced tail (documented inline at the two
+  loop sites).
 
 ---
 
