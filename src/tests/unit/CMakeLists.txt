@@ -23,6 +23,10 @@ set(NODE_META_SRCS
     ${KVCACHE_NODE_SRC}/meta/rocksdb_store.cpp
 )
 
+set(NODE_PERSIST_SRCS
+    ${KVCACHE_NODE_SRC}/persist/state_wal.cpp
+)
+
 set(NODE_TIER_SRCS
     ${KVCACHE_NODE_SRC}/tier/pinned_tier.cpp
     ${KVCACHE_NODE_SRC}/tier/dram_tier.cpp
@@ -104,6 +108,7 @@ kvcache_add_test(test_epoch            prefix/epoch_test.cpp            ${NODE_P
 kvcache_add_test(test_art_concurrent   prefix/art_concurrent_test.cpp   ${NODE_PREFIX_SRCS})
 kvcache_add_test(test_art_snapshot     prefix/art_snapshot_test.cpp     ${NODE_PREFIX_SRCS})
 kvcache_add_test(test_art_wal          prefix/art_wal_test.cpp          ${NODE_PREFIX_SRCS})
+kvcache_add_test(test_state_wal        persist/state_wal_test.cpp       ${NODE_PERSIST_SRCS})
 kvcache_add_test(test_rocksdb_store    meta/rocksdb_store_test.cpp      ${NODE_META_SRCS})
 if(KVCACHE_ENABLE_ROCKSDB)
     target_link_libraries(test_rocksdb_store PRIVATE RocksDB::rocksdb)

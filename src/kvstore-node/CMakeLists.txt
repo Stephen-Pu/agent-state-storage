@@ -27,6 +27,8 @@ set(NODE_CORE_SRCS
     src/prefix/kv_event_stream.cpp
     src/prefix/art_snapshot.cpp
     src/prefix/art_wal.cpp
+    # persist
+    src/persist/state_wal.cpp
     # ingest
     src/ingest/mutable_buffer.cpp
     src/ingest/watermark.cpp
