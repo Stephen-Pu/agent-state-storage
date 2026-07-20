@@ -228,8 +228,15 @@ Am→A1in fallback gap described above — which was fixed in Task 5; a focused
 re-review of that fix confirmed KV byte-identity and test discrimination with
 no Critical/Important findings.
 
-**Still deferred:** the DRAM *store* path that would admit a B-class entry in
-the first place — the real B-plane ingest. This landed only the eviction half.
+**Landed since (2026-07-20):** the DRAM *store* path that admits a B-class
+entry — single-node, WAL-backed B ingest end-to-end: `StatePut`/`StateGet`,
+WAL-first durability (fsync-per-append, survives **process restart**, not node
+loss), DRAM staging with a real `state_kind`, and demotion + replay-from-WAL on
+miss. See `docs/superpowers/specs/2026-07-20-b-plane-dram-ingest-design.md`.
+**Still deferred:** replication, strong consistency, the lineage engine (⑭),
+the B1 Agent-Memory and B2 Durable-Execution subsystems, threading
+`StateIdentity` across the FFI/gRPC wire, bounded-memory WAL, and WAL
+compaction/GC.
 
 ---
 

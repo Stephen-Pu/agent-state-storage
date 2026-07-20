@@ -177,10 +177,10 @@ We publish exactly what is built and what is not. This table is the contract, an
 | Sandbox snapshot | A | — | P2 · reuses the spine |
 | Embedding / RAG-chunk | A | — | P2 · reuses the spine |
 | Tool-result memoization | A | — | P2 · idempotent-only · policy + identity landed on the spine (idempotent-gated); engine ingest connector pending |
-| **Agent long-term memory** | B | — | P3 · durable, governed, vector-indexed, multi-tenant |
-| **Durable execution state** | B | — | P3 · lineage DAG + crash-resume; integrates Temporal-class engines |
+| **Agent long-term memory** | B | — | P3 · durable, governed, vector-indexed, multi-tenant · single-node B-state ingest + WAL persistence (survives process restart, not node loss) now wired on the spine ([spec](docs/superpowers/specs/2026-07-20-b-plane-dram-ingest-design.md)); replication, strong consistency, lineage (⑭), and B1 memory semantics still 🚧 |
+| **Durable execution state** | B | — | P3 · lineage DAG + crash-resume; integrates Temporal-class engines · same single-node WAL ingest primitive now wired; B2 Temporal-class integration, replication, strong consistency, and lineage (⑭) still 🚧 |
 
-✅ shipped · — not yet · P2/P3 roadmap. Full architecture (HLD/LLD) available to active contributors on request.
+✅ shipped · — not yet · 🚧 in design/deferred · P2/P3 roadmap. Full architecture (HLD/LLD) available to active contributors on request.
 
 > **Why publish this?** Because the alternative — an umbrella with no spine and no disclosed edges — is
 > exactly what the hyperscaler narratives are. Our honesty about the boundary *is* the differentiation.
