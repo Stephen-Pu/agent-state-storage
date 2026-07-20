@@ -26,12 +26,14 @@
 #include "prefix/art_wal.h"
 #include "prefix/kv_event_stream.h"
 #include "prefix/lpm.h"
+#include "persist/state_wal.h"   // B-ingest — StateWal (13 v0)
 #include "state_identity.h"   // SS-2 spine spike, Task 5 — StateIdentity / SK_KV
 #include "tier/tier_manager.h"
 #include "transport/nixl_wrapper.h"
 #include "transport/priority_scheduler.h"
 #include "value_policy.h"     // SS-2 spine spike, Task 5 — ValuePolicyRegistry
 #include "value_policy_kv.h"  // SS-2 spine spike, Task 5 — ValuePolicyKv
+#include "value_policy_persistent_wal.h"  // B-ingest — SK_MEMORY policy
 #include "value_policy_tool_result.h"  // A-plane generalization, Task 3 — ValuePolicyToolResult
 
 namespace kvcache::abi {
@@ -72,6 +74,9 @@ class HeadlessNode {
         // gives incremental durability: boot is O(snapshot + WAL tail)
         // instead of O(every-ever-seen-chunk).
         std::string art_wal_path;
+        // B-ingest — path to the append-only B-state WAL. Empty ⇒ B ingest
+        // disabled (StatePut returns KV_E_TIER_DOWN). Distinct from art_wal_path.
+        std::string state_wal_path;
     };
 
     static HeadlessNode* GetOrCreate(const Options& opts, std::string* err);
@@ -140,6 +145,15 @@ class HeadlessNode {
     // KV_E_INVAL if it is not an ingest handle, KV_E_INTERNAL on ART conflict.
     int SealByChunkPath(kv_handle_t handle,
                         const std::vector<node::prefix::ChunkHash>& chunk_path);
+
+    // B-plane ingest (C++-core; not on the C ABI/wire this slice). StatePut is
+    // WAL-first then stages to DRAM; StateGet is DRAM-then-replay. Keys are
+    // derived from id.content_hash[0:16). Returns KV_OK / KV_E_NOT_FOUND /
+    // KV_E_TIER_DOWN (no WAL configured).
+    int StatePut(const kvcache::common::StateIdentity& id,
+                 const uint8_t* data, std::size_t n);
+    int StateGet(const kvcache::common::StateIdentity& id,
+                 std::vector<uint8_t>* out);
 
     int Release(kv_handle_t handle);
 
@@ -221,6 +235,9 @@ class HeadlessNode {
         policy_reg_.registerPolicy(
             kvcache::common::SK_TOOL_RESULT,
             std::make_unique<kvcache::common::ValuePolicyToolResult>());
+        policy_reg_.registerPolicy(
+            kvcache::common::SK_MEMORY,
+            std::make_unique<kvcache::common::ValuePolicyPersistentWal>());
     }
 
     bool Init(const Options& opts, std::string* err);
@@ -274,6 +291,7 @@ class HeadlessNode {
     // periodic snapshot (Phase D-2). When `art_wal_path` is unset in
     // Options the wrapper is nullptr and writes go straight to art_.
     std::unique_ptr<node::prefix::ArtWal>              art_wal_;
+    std::unique_ptr<node::persist::StateWal>           wal_;   // B-ingest (13 v0)
     std::unique_ptr<node::prefix::EventStream>         events_;
     std::unique_ptr<node::transport::NixlWrapper>      nixl_;
 

@@ -22,6 +22,7 @@
 #include <optional>
 #include <string>
 
+#include "state_identity.h"
 #include "tier/cold_tier.h"
 #include "tier/dram_tier.h"
 #include "tier/nvme_tier.h"
@@ -60,7 +61,8 @@ class TierManager {
     void                    ReleasePinnedSlot(SlotId id);
 
     // ---- T2 (DRAM) ----
-    void                    StageToDram(const DramKey& key, const uint8_t* data, std::size_t n);
+    void                    StageToDram(const DramKey& key, const uint8_t* data, std::size_t n,
+                                        uint16_t state_kind = kvcache::common::SK_KV);
     DramTier::LookupResult  LookupDram (const DramKey& key);
     // Read-only peek: no LRU splice, no tier promotion. Used by ReplicaFetch.
     DramTier::LookupResult  PeekDram   (const DramKey& key) const;

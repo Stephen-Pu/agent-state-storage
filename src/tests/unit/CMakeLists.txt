@@ -612,6 +612,48 @@ if(OpenSSL_FOUND)
     target_link_libraries(test_hot_path_seam PRIVATE OpenSSL::Crypto)
 endif()
 
+# B-ingest, Task 3 — StatePut/StateGet on HeadlessNode (WAL-first ingest,
+# DRAM demotion + replay). Mirrors test_replica_fetch: compiles
+# headless_node.cpp directly so the non-ABI C++ methods are reachable
+# without going through the kvcache dylib's public C surface. StateWal
+# comes from kvstore_node_core (persist/state_wal.cpp); ValuePolicyPersistentWal
+# comes from kvcache_common (value_policy_persistent_wal.cpp) — same link set
+# as test_replica_fetch since the source sets are identical.
+kvcache_add_test(test_state_ingest
+                  persist/state_ingest_test.cpp
+                  ${CMAKE_SOURCE_DIR}/core-abi/src/headless_node.cpp
+                  ${CMAKE_SOURCE_DIR}/core-abi/src/ctx_options.cpp
+                  ${CMAKE_SOURCE_DIR}/core-abi/src/kv_status.cpp)
+target_include_directories(test_state_ingest PRIVATE
+                  ${CMAKE_SOURCE_DIR}/core-abi/src
+                  ${KVCACHE_NODE_SRC})
+target_link_libraries(test_state_ingest PRIVATE
+                  kvstore_node_core
+                  kvcache_common
+                  CURL::libcurl)
+if(OpenSSL_FOUND)
+    target_link_libraries(test_state_ingest PRIVATE OpenSSL::Crypto)
+endif()
+
+# B-ingest, Task 3 — no-WAL guard. Needs its own process (own singleton) with
+# an empty state_wal_path, so it lives in a separate test binary from
+# test_state_ingest above.
+kvcache_add_test(test_state_ingest_nowal
+                  persist/state_ingest_nowal_test.cpp
+                  ${CMAKE_SOURCE_DIR}/core-abi/src/headless_node.cpp
+                  ${CMAKE_SOURCE_DIR}/core-abi/src/ctx_options.cpp
+                  ${CMAKE_SOURCE_DIR}/core-abi/src/kv_status.cpp)
+target_include_directories(test_state_ingest_nowal PRIVATE
+                  ${CMAKE_SOURCE_DIR}/core-abi/src
+                  ${KVCACHE_NODE_SRC})
+target_link_libraries(test_state_ingest_nowal PRIVATE
+                  kvstore_node_core
+                  kvcache_common
+                  CURL::libcurl)
+if(OpenSSL_FOUND)
+    target_link_libraries(test_state_ingest_nowal PRIVATE OpenSSL::Crypto)
+endif()
+
 # Task 3 — A9 DR warm-standby: WarmSetFilter (header-only predicate).
 #
 # The filter lives in replication/warm_filter.h and has no .cpp of its own.

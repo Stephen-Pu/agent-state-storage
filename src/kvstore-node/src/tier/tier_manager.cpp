@@ -29,8 +29,9 @@ std::optional<SlotDesc> TierManager::AcquirePinnedSlot() { return pinned_->Acqui
 void TierManager::ReleasePinnedSlot(SlotId id)            { pinned_->Release(id); }
 
 // ---- T2 ----
-void TierManager::StageToDram(const DramKey& key, const uint8_t* data, std::size_t n) {
-    dram_->Insert(key, data, n);
+void TierManager::StageToDram(const DramKey& key, const uint8_t* data, std::size_t n,
+                              uint16_t state_kind) {
+    dram_->Insert(key, data, n, state_kind);
 }
 DramTier::LookupResult TierManager::LookupDram(const DramKey& key) {
     return dram_->Lookup(key);

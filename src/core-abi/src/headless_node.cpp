@@ -121,6 +121,15 @@ node::tier::DramKey LocatorContentKey(const kv_locator_t& loc) {
     return k;
 }
 
+// B-ingest — build a DramKey from a StateIdentity's content_hash (first 16
+// bytes). Mirrors LocatorContentKey but for the generalized identity.
+node::tier::DramKey StateKeyFromIdentity(const kvcache::common::StateIdentity& id) {
+    node::tier::DramKey k{};
+    auto bytes = kvcache::common::StateKeyBytesFromIdentity(id);  // first 16 of content_hash
+    std::memcpy(k.bytes.data(), bytes.data(), 16);
+    return k;
+}
+
 }  // namespace
 
 HeadlessNode* HeadlessNode::GetOrCreate(const Options& opts, std::string* err) {
@@ -280,6 +289,17 @@ bool HeadlessNode::Init(const Options& opts, std::string* err) {
         }
     }
     if (!art_ && !art_wal_) art_ = std::make_unique<node::prefix::ArtIndex>();
+
+    // B-ingest — open the B-state WAL if a path was configured.
+    if (!opts.state_wal_path.empty()) {
+        std::string wal_err;
+        wal_ = node::persist::StateWal::Open(opts.state_wal_path, &wal_err);
+        if (!wal_) {
+            if (err) *err = "state_wal open failed: " + wal_err;
+            return false;
+        }
+    }
+
     events_  = std::make_unique<node::prefix::EventStream>();
     // Phase G-2 — start the refcount-deferred eviction sweeper.
     sweeper_ = std::thread([this] { SweeperLoop(); });
@@ -740,6 +760,56 @@ int HeadlessNode::SealByChunkPath(
     }
     if (st.kind != HandleKind::kIngest) return KV_E_INVAL;
     return SealCommit(handle, st, chunk_path);
+}
+
+// ---------------------------------------------------------------------------
+// StatePut / StateGet (B-plane ingest, Task 3)
+// ---------------------------------------------------------------------------
+
+int HeadlessNode::StatePut(const kvcache::common::StateIdentity& id,
+                           const uint8_t* data, std::size_t n) {
+    if (!wal_) return KV_E_TIER_DOWN;         // B ingest requires a durable WAL
+    if (data == nullptr && n != 0) return KV_E_INVAL;
+
+    const auto key = StateKeyFromIdentity(id);
+
+    // WAL-FIRST: the durable copy must exist before the DRAM copy, so a crash
+    // can never leave a DRAM-only (unrecoverable) B entry.
+    std::string werr;
+    if (!wal_->Append(key, id, data, n, &werr)) {
+        return KV_E_INTERNAL;                 // nothing staged — no DRAM-only entry
+    }
+    // Now cache in DRAM with the real kind so the evict seam dispatches the B
+    // policy (evictable-because-persisted).
+    tm_->StageToDram(key, data, n, kvcache::common::SK_MEMORY);
+    return KV_OK;
+}
+
+int HeadlessNode::StateGet(const kvcache::common::StateIdentity& id,
+                           std::vector<uint8_t>* out) {
+    if (out == nullptr) return KV_E_INVAL;
+    if (!wal_) return KV_E_TIER_DOWN;
+
+    const auto key = StateKeyFromIdentity(id);
+
+    // DRAM first.
+    auto hit = tm_->LookupDram(key);
+    if (hit.where == node::tier::DramTier::HitWhere::kA1in ||
+        hit.where == node::tier::DramTier::HitWhere::kAm) {
+        out->assign(hit.data, hit.data + hit.data_bytes);
+        return KV_OK;
+    }
+
+    // Miss → consult the B policy. For SK_MEMORY this is kReplayFromPersist.
+    const auto action = policy_reg_.of(kvcache::common::SK_MEMORY).onMiss(id);
+    if (action == kvcache::common::OnMissAction::kReplayFromPersist) {
+        if (wal_->Get(key, out)) {
+            // Re-stage the replayed copy so subsequent reads hit DRAM again.
+            tm_->StageToDram(key, out->data(), out->size(), kvcache::common::SK_MEMORY);
+            return KV_OK;
+        }
+    }
+    return KV_E_NOT_FOUND;
 }
 
 // ---------------------------------------------------------------------------
