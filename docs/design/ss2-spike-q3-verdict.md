@@ -66,9 +66,10 @@ is no per-kind conditional logic inlined at the call site.
 > reverse-walking tail→front for the next evictable candidate and breaking
 > cleanly if none remains (no infinite loop). A B-class entry can therefore
 > reside in DRAM eviction-wise without being discarded, while KV victim selection
-> stays byte-identical to the old `pop_back()` path. **Still deferred:** nothing
-> *inserts* a B-class entry into the DRAM store path yet — that is the real
-> B-plane ingest, out of scope here; this closed only the *eviction* half.
+> stays byte-identical to the old `pop_back()` path. **At SS-2 time this closed
+> only the *eviction* half** — nothing yet inserted a B-class entry into the
+> DRAM store path (the real B-plane ingest). **That ingest has since landed**
+> (2026-07-20, single-node, WAL-backed) — see "Landed since (2026-07-20)" below.
 The kind-specific behavior lives entirely inside the policy implementation
 (`ValuePolicyKv`, `ValuePolicyPersistentStub`), which is exactly the
 separation Q3 asked for.
@@ -159,8 +160,11 @@ Not in scope for this spike; tracked as follow-on work:
   dispatches the correct policy per victim (no synthetic `SK_KV`); and (b)
   `EvictToFit` skips a `NOT_EVICTABLE` victim (reverse-walk tail→front for the
   next evictable candidate, break cleanly if none) instead of the old `break`.
-  **What remains deferred:** the DRAM *store* path that would actually admit a
-  B-class entry — this closed only the eviction half of the trap.
+  This restructure closed only the *eviction* half of the trap — the DRAM
+  *store* path that would actually admit a B-class entry was, at the time,
+  a separate remaining gap. **That store-path ingest has since landed**
+  (2026-07-20, single-node, WAL-backed) — see "Landed since (2026-07-20)"
+  below.
 
 ---
 
