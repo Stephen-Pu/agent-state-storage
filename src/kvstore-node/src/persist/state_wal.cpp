@@ -4,6 +4,7 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <cstdint>
 #include <cstring>
 
 namespace kvcache::node::persist {
@@ -78,6 +79,11 @@ std::unique_ptr<StateWal> StateWal::Open(const std::string& path, std::string* e
                 const uint8_t* bl = kp + kKeyLen + kIdLen;
                 const uint32_t blob_len = GetU32(bl);
                 const uint8_t* blob = bl + 4;
+                // blob_len must exactly account for the rest of the record body;
+                // a mismatch means a corrupt-but-CRC-valid record (or a torn
+                // write that happened to land on a CRC collision) — treat it
+                // the same as a CRC mismatch and stop replay here.
+                if (blob_len != body_len - (1 + kKeyLen + kIdLen + 4)) break;
                 tier::DramKey key{};
                 std::memcpy(key.bytes.data(), kp, kKeyLen);
                 self->map_[key].assign(blob, blob + blob_len);
@@ -110,11 +116,24 @@ StateWal::~StateWal() {
     if (fd_ >= 0) ::close(fd_);
 }
 
+// On a failed write/fsync below, Append returns false without touching the
+// in-memory map — the caller must treat the entry as not persisted. Any
+// stray partial bytes left on disk are not cleaned up mid-process; they
+// self-heal via torn-tail truncation the next time Open() replays the file.
+// Note that after an fsync failure the on-disk state is undefined per
+// standard WAL semantics (the OS/filesystem gives no guarantee about which
+// bytes made it to stable storage), so a subsequent Open() may or may not
+// end up replaying this particular record.
 bool StateWal::Append(const tier::DramKey& key, const common::StateIdentity& id,
                       const uint8_t* data, std::size_t n, std::string* err) {
     std::lock_guard<std::mutex> lk(mu_);
 
-    const uint32_t rec_len = static_cast<uint32_t>(4 + 1 + kKeyLen + kIdLen + 4 + n + 4);
+    const std::size_t rec_len_wide = 4 + 1 + kKeyLen + kIdLen + 4 + n + 4;
+    if (rec_len_wide > UINT32_MAX) {
+        if (err) *err = "state_wal append: record too large (blob length overflows rec_len)";
+        return false;
+    }
+    const uint32_t rec_len = static_cast<uint32_t>(rec_len_wide);
     std::vector<uint8_t> rec;
     rec.reserve(rec_len);
     PutU32(rec, rec_len);
