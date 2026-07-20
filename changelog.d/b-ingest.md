@@ -1,3 +1,0 @@
-- **StateWal** (NEW): append-only B-state persistence engine (⑬ v0) — fsync-per-append, torn-tail-safe replay.
-- **HeadlessNode.StatePut/StateGet** (NEW): C++-core B-plane ingest — WAL-first durability, DRAM staging with real state_kind, demotion + replay-from-WAL on miss.
-- **ValuePolicyPersistentWal** (NEW): production SK_MEMORY policy (evictable-because-persisted + replay-from-persist).

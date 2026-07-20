@@ -7,6 +7,7 @@
 #include "state_identity.h"
 #include "value_policy.h"
 #include "value_policy_kv.h"
+#include "value_policy_persistent_stub.h"
 
 using kvcache::common::CostModel;
 using kvcache::common::EvictDecision;
@@ -37,4 +38,12 @@ TEST(ValuePolicyPersistentWal, IsEvictableAndReplaysFromPersist) {
     // Contrast with KV: opposite miss action, evictable both but for different reasons.
     ValuePolicyKv kv;
     EXPECT_EQ(kv.onMiss(id), OnMissAction::kRecompute);
+
+    // Contrast with the stub: both replay-on-miss, but the WAL policy is
+    // evictable (persist-first makes the DRAM copy demotable) while the stub
+    // pins its entry (no backing persistence engine yet, so it must never be
+    // discarded).
+    kvcache::common::ValuePolicyPersistentStub stub;
+    EXPECT_EQ(stub.shouldEvict(id, /*tier=*/0),
+              kvcache::common::EvictDecision::kNotEvictable);  // stub pins; WAL policy is kEvictable
 }

@@ -788,7 +788,10 @@ int HeadlessNode::StatePut(const kvcache::common::StateIdentity& id,
 int HeadlessNode::StateGet(const kvcache::common::StateIdentity& id,
                            std::vector<uint8_t>* out) {
     if (out == nullptr) return KV_E_INVAL;
-    if (!wal_) return KV_E_TIER_DOWN;
+    if (!wal_) {
+        out->clear();
+        return KV_E_TIER_DOWN;
+    }
 
     const auto key = StateKeyFromIdentity(id);
 
@@ -809,6 +812,7 @@ int HeadlessNode::StateGet(const kvcache::common::StateIdentity& id,
             return KV_OK;
         }
     }
+    out->clear();
     return KV_E_NOT_FOUND;
 }
 
