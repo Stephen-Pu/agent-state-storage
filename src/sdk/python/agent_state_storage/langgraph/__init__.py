@@ -4,5 +4,6 @@ Requires `pip install "agent-state-storage[langgraph]"`.
 """
 
 from .checkpoint import AgentStateSaver
+from .store import AgentStateStore
 
-__all__ = ["AgentStateSaver"]
+__all__ = ["AgentStateSaver", "AgentStateStore"]
