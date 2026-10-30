@@ -17,6 +17,7 @@ set(PROTO_FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/events.proto
     ${CMAKE_CURRENT_SOURCE_DIR}/node.proto
     ${CMAKE_CURRENT_SOURCE_DIR}/cp.proto
+    ${CMAKE_CURRENT_SOURCE_DIR}/agentstate.proto
 )
 
 set(PROTO_OUT_DIR ${CMAKE_BINARY_DIR}/proto)
@@ -66,6 +67,7 @@ add_custom_command(
     OUTPUT  ${PROTO_OUT_DIR}/events.pb.cc ${PROTO_OUT_DIR}/events.pb.h
             ${PROTO_OUT_DIR}/node.pb.cc   ${PROTO_OUT_DIR}/node.pb.h
             ${PROTO_OUT_DIR}/cp.pb.cc     ${PROTO_OUT_DIR}/cp.pb.h
+            ${PROTO_OUT_DIR}/agentstate.pb.cc ${PROTO_OUT_DIR}/agentstate.pb.h
     COMMAND ${_protoc}
             --proto_path=${CMAKE_CURRENT_SOURCE_DIR}
             --cpp_out=${PROTO_OUT_DIR}

@@ -519,6 +519,14 @@ if(KVCACHE_HAVE_GRPC)
         kvcache
     )
 
+    # M1 — agentstate.v1 service over an in-process gRPC server.
+    kvcache_add_test(test_agent_state_service
+                      session/agent_state_service_test.cpp)
+    target_link_libraries(test_agent_state_service PRIVATE
+        kvstore_node_grpc
+        kvcache
+    )
+
     # Phase Q-1: cross-node Lookup fan-out via real gRPC + in-memory
     # etcd. Stands up two NodeDataService instances in-process, both
     # registered with the directory; verifies non-primary forwards.
