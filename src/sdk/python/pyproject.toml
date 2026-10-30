@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-state-storage"
+version = "0.1.0"
+description = "Python SDK for AgentStateStorage, the open session layer for AI agents"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.10"
+dependencies = [
+    "grpcio>=1.71",
+    "protobuf>=5.29,<8",
+]
+
+[project.optional-dependencies]
+openai-agents = ["openai-agents>=0.24"]
+langgraph = ["langgraph>=1.2", "langgraph-checkpoint>=4.3"]
+test = ["pytest>=8", "pytest-asyncio>=0.24", "langgraph-checkpoint-conformance>=0.0.2"]
+
+[project.urls]
+Homepage = "https://github.com/Stephen-Pu/agent-state-storage"
+
+[tool.setuptools.packages.find]
+include = ["agent_state_storage*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
