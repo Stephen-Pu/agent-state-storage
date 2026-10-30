@@ -16,6 +16,9 @@
 #include <vector>
 
 #include "grpc/grpc_server.h"
+#include "grpc/node_data_service.h"
+#include "kvcache/kv_abi.h"
+#include "node.grpc.pb.h"
 
 namespace asv1 = ::agentstate::v1;
 using kvcache::node::grpc_server::GrpcServer;
@@ -466,4 +469,48 @@ TEST(AgentStateServiceTls, TlsTenantComesFromCertificate) {
     EXPECT_EQ(resp.items_size(), 2);
     server.Stop();
     Sh("rm -rf " + d);
+}
+
+// ---- Wiring: NodeData and AgentState on one GrpcServer --------------------
+
+TEST(AgentStateServiceWiring, TwoServicesShareOnePort) {
+    kv_ctx_config_t cfg{};
+    cfg.abi_version = KVCACHE_ABI_VERSION;
+    cfg.tenant_id   = "wiring-tenant";
+    cfg.model_id    = "wiring-model";
+    kv_ctx_t* kctx  = nullptr;
+    ASSERT_EQ(kv_ctx_open(&cfg, &kctx), KV_OK);
+    kvcache::node::grpc_server::NodeDataServiceImpl node_data(kctx);
+
+    std::string err;
+    auto store = OrderedLogStore::Open("", &err);
+    auto blobs = BlobStore::Open("", &err);
+    AgentStateServiceImpl agent_state(store.get(), blobs.get());
+
+    GrpcServer::Options o;
+    o.bind_host = "127.0.0.1";
+    o.port      = 0;
+    GrpcServer server(o, std::vector<::grpc::Service*>{&node_data, &agent_state});
+    ASSERT_TRUE(server.Ok()) << server.error();
+    auto ch = ::grpc::CreateChannel("127.0.0.1:" + std::to_string(server.BoundPort()),
+                                    ::grpc::InsecureChannelCredentials());
+    {
+        auto stub = asv1::AgentState::NewStub(ch);
+        ::grpc::ClientContext ctx;
+        asv1::AppendItemsRequest req;
+        req.set_tenant("t");
+        req.set_session("s");
+        req.add_items("x");
+        asv1::AppendItemsResponse resp;
+        EXPECT_TRUE(stub->AppendItems(&ctx, req, &resp).ok());
+    }
+    {
+        auto stub = kvcache::proto::NodeData::NewStub(ch);
+        ::grpc::ClientContext ctx;
+        kvcache::proto::LookupRequest req;
+        kvcache::proto::LookupResponse resp;
+        EXPECT_NE(stub->Lookup(&ctx, req, &resp).error_code(), ::grpc::StatusCode::UNIMPLEMENTED);
+    }
+    server.Stop();
+    kv_ctx_close(kctx);
 }

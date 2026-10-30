@@ -63,7 +63,10 @@ BuildCredentials(const GrpcServer::Options& opts, std::string* err) {
 
 }  // namespace
 
-GrpcServer::GrpcServer(const Options& opts, ::grpc::Service* service) {
+GrpcServer::GrpcServer(const Options& opts, ::grpc::Service* service)
+    : GrpcServer(opts, std::vector<::grpc::Service*>{service}) {}
+
+GrpcServer::GrpcServer(const Options& opts, const std::vector<::grpc::Service*>& services) {
     auto creds = BuildCredentials(opts, &error_);
     if (!creds) {
         return;  // error_ already set by BuildCredentials
@@ -77,7 +80,7 @@ GrpcServer::GrpcServer(const Options& opts, ::grpc::Service* service) {
     // optional out-param. For port=0 this is how we learn the OS-picked
     // value.
     builder.AddListeningPort(addr, std::move(creds), &selected_port);
-    builder.RegisterService(service);
+    for (auto* service : services) builder.RegisterService(service);
     server_ = builder.BuildAndStart();
     if (!server_) {
         error_ = "grpc::ServerBuilder::BuildAndStart returned null";
