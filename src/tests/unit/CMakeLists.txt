@@ -109,6 +109,8 @@ kvcache_add_test(test_art_concurrent   prefix/art_concurrent_test.cpp   ${NODE_P
 kvcache_add_test(test_art_snapshot     prefix/art_snapshot_test.cpp     ${NODE_PREFIX_SRCS})
 kvcache_add_test(test_art_wal          prefix/art_wal_test.cpp          ${NODE_PREFIX_SRCS})
 kvcache_add_test(test_state_wal        persist/state_wal_test.cpp       ${NODE_PERSIST_SRCS})
+kvcache_add_test(test_ordered_log_store session/ordered_log_store_test.cpp
+                 ${KVCACHE_NODE_SRC}/session/ordered_log_store.cpp)
 kvcache_add_test(test_rocksdb_store    meta/rocksdb_store_test.cpp      ${NODE_META_SRCS})
 if(KVCACHE_ENABLE_ROCKSDB)
     target_link_libraries(test_rocksdb_store PRIVATE RocksDB::rocksdb)
