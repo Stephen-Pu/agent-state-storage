@@ -111,3 +111,31 @@ async def test_async_graph(aclient, client):
     out = await app.ainvoke({"count": 5, "log": []}, cfg)
     assert out["count"] == 6
     assert (await app.aget_state(cfg)).values["count"] == 6
+
+
+def test_integer_thread_ids(client):
+    from langgraph.checkpoint.base import empty_checkpoint
+
+    saver = AgentStateSaver(client)
+    cp = empty_checkpoint()
+    saver.put({"configurable": {"thread_id": 7, "checkpoint_ns": ""}}, cp, {}, {})
+    # LangGraph's own savers store str(thread_id), so 7 and "7" name one thread.
+    for tid in (7, "7"):
+        got = saver.get_tuple({"configurable": {"thread_id": tid}})
+        assert got is not None and got.checkpoint["id"] == cp["id"]
+    assert {t.config["configurable"]["thread_id"] for t in saver.list(None)} == {"7"}
+
+
+def test_checkpoint_with_large_channels(client):
+    class Big(TypedDict):
+        a: str
+        b: str
+
+    g = StateGraph(Big)
+    g.add_node("fill", lambda s: {"a": "x" * (2500 * 1024), "b": "y" * (2500 * 1024)})
+    g.add_edge(START, "fill")
+    g.add_edge("fill", END)
+    app = g.compile(checkpointer=AgentStateSaver(client))
+    cfg = {"configurable": {"thread_id": "big"}}
+    app.invoke({"a": "", "b": ""}, cfg)
+    assert len(app.get_state(cfg).values["a"]) == 2500 * 1024

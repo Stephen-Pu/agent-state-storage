@@ -297,6 +297,15 @@ int main(int argc, char** argv) {
     o.grpc_port          = grpc.BoundPort();  // for log clarity
     std::fprintf(stderr, "kvstore-node: grpc tls=%s\n",
                   grpc.TlsEnabled() ? "on" : "off");
+    if (!grpc.TlsEnabled() && grpc_opts.bind_host != "127.0.0.1" &&
+        grpc_opts.bind_host != "::1" && grpc_opts.bind_host != "localhost") {
+        std::fprintf(stderr,
+            "kvstore-node: WARNING: gRPC is plaintext on %s:%u and agentstate.v1 "
+            "trusts the tenant named in each request; anyone who can reach this "
+            "port can read or erase any tenant's state. Use --tls-ca/--tls-cert/"
+            "--tls-key outside a single trusted machine.\n",
+            grpc_opts.bind_host.c_str(), static_cast<unsigned>(grpc.BoundPort()));
+    }
 
     // ---- Phase Q-1: optional cluster registration + fan-out ---------
     std::unique_ptr<kvcache::node::cluster::HttpEtcdClient>     etcd;

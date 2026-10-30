@@ -69,6 +69,9 @@ class Node:
                 self._proc.wait()
         self._proc = None
 
+    def log(self) -> str:
+        return self._log.read_text()
+
     def restart(self) -> None:
         self.stop()
         self.start()

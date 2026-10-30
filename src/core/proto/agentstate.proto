@@ -12,8 +12,10 @@
 // PERMISSION_DENIED. Without TLS (local development only) the request
 // `tenant` field is required and trusted.
 //
-// Limits: one item or record value is at most 4 MiB; a blob at most 4 GiB,
-// streamed in chunks of at most 1 MiB.
+// Limits: one item or record value is at most 4 MiB, one request at most
+// 64 MiB; a blob at most 4 GiB, streamed in chunks of at most 1 MiB.
+// GetItems and ScanRecords pages stop at about 4 MiB of payload (always at
+// least one entry) and set has_more.
 syntax = "proto3";
 package agentstate.v1;
 
@@ -24,7 +26,9 @@ service AgentState {
   // Append items to the end of a session. Returns the sequence number the
   // next appended item will get.
   rpc AppendItems(AppendItemsRequest) returns (AppendItemsResponse);
-  // The latest `limit` items (all when 0), oldest first.
+  // The latest `limit` items (all when 0) older than `before_seq` (0 = the
+  // newest), oldest first, one page at a time: when `has_more`, ask again
+  // with before_seq = first_seq.
   rpc GetItems(GetItemsRequest) returns (GetItemsResponse);
   // Remove and return the latest item.
   rpc PopItem(PopItemRequest) returns (PopItemResponse);
@@ -39,8 +43,8 @@ service AgentState {
   rpc GetRecords(GetRecordsRequest) returns (GetRecordsResponse);
   // Keys under `prefix`, strictly between `start_after` and `end_before`
   // (each ignored when empty), in key order or reversed. At most `limit`
-  // records per call (server cap 1000; 0 = the cap); `has_more` says
-  // whether more remain.
+  // records per call (server cap 1000 records or about 4 MiB; 0 = the cap);
+  // `has_more` says whether more remain.
   rpc ScanRecords(ScanRecordsRequest) returns (ScanRecordsResponse);
   rpc DeleteRecordPrefix(DeleteRecordPrefixRequest) returns (DeleteRecordPrefixResponse);
 
@@ -65,8 +69,13 @@ message GetItemsRequest {
   string tenant = 1;
   string session = 2;
   uint32 limit = 3;
+  uint64 before_seq = 4;
 }
-message GetItemsResponse { repeated bytes items = 1; }
+message GetItemsResponse {
+  repeated bytes items = 1;
+  bool has_more = 2;    // older items remain before first_seq
+  uint64 first_seq = 3; // sequence number of items[0]
+}
 
 message PopItemRequest {
   string tenant = 1;

@@ -101,3 +101,35 @@ def test_state_survives_node_restart(fresh_node, tenant):
         assert c.get_records([b"cp/1"]) == {b"cp/1": b"checkpoint"}
         assert c.get_blob("ws") == b"workspace"
         assert c.append_items("s", [b"turn-3"]) == 4
+
+
+MB = 1024 * 1024
+
+
+def test_items_larger_than_one_message_page_through(client):
+    items = [bytes([i]) * (3 * MB + 900 * 1024) for i in range(20)]  # ~78 MB in total
+    for i in range(0, 20, 4):
+        client.append_items("big", items[i:i + 4])  # ~15.6 MB per request
+    assert client.get_items("big") == items
+    assert client.get_items("big", limit=3) == items[-3:]
+
+
+def test_large_records_page_through_scans(client):
+    value = b"v" * (3 * MB + 900 * 1024)
+    for i in range(20):
+        client.write_records([Record(f"big/{i:02d}".encode(), value)])
+    keys = [r.key for r in client.scan_records(b"big/")]
+    assert keys == [f"big/{i:02d}".encode() for i in range(20)]
+    assert [r.key for r in client.scan_records(b"big/", reverse=True, limit=2)] == keys[:-3:-1]
+
+
+def test_request_with_two_large_values(client):
+    two = [b"a" * (2500 * 1024), b"b" * (2500 * 1024)]
+    client.append_items("two", two)
+    client.write_records([Record(b"r1", two[0]), Record(b"r2", two[1])])
+    assert client.get_items("two") == two
+    assert client.get_records([b"r1", b"r2"]) == {b"r1": two[0], b"r2": two[1]}
+
+
+def test_plaintext_listener_warns_at_startup(node):
+    assert "WARNING" in node.log() and "plaintext" in node.log()

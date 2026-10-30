@@ -114,7 +114,9 @@ class AgentStateServicer(object):
         raise NotImplementedError('Method not implemented!')
 
     def GetItems(self, request, context):
-        """The latest `limit` items (all when 0), oldest first.
+        """The latest `limit` items (all when 0) older than `before_seq` (0 = the
+        newest), oldest first, one page at a time: when `has_more`, ask again
+        with before_seq = first_seq.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -158,8 +160,8 @@ class AgentStateServicer(object):
     def ScanRecords(self, request, context):
         """Keys under `prefix`, strictly between `start_after` and `end_before`
         (each ignored when empty), in key order or reversed. At most `limit`
-        records per call (server cap 1000; 0 = the cap); `has_more` says
-        whether more remain.
+        records per call (server cap 1000 records or about 4 MiB; 0 = the cap);
+        `has_more` says whether more remain.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')

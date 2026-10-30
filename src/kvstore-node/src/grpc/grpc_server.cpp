@@ -80,6 +80,9 @@ GrpcServer::GrpcServer(const Options& opts, const std::vector<::grpc::Service*>&
     // optional out-param. For port=0 this is how we learn the OS-picked
     // value.
     builder.AddListeningPort(addr, std::move(creds), &selected_port);
+    // M1 — agentstate.v1 allows 4 MiB per value, so a request with several
+    // values exceeds gRPC's 4 MiB default.
+    builder.SetMaxReceiveMessageSize(64 << 20);
     for (auto* service : services) builder.RegisterService(service);
     server_ = builder.BuildAndStart();
     if (!server_) {

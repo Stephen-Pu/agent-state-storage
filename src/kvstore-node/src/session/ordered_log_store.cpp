@@ -322,13 +322,17 @@ std::optional<std::string> OrderedLogStore::Get(const std::string& key) const {
 std::vector<KV> OrderedLogStore::Scan(const ScanOptions& o, bool* has_more) const {
     std::lock_guard<std::mutex> lk(mu_);
     std::vector<KV> out;
-    bool more = false;
+    bool more         = false;
+    std::size_t bytes = 0;
     auto take = [&](const std::map<std::string, std::string>::const_iterator& it) {
-        if (o.limit != 0 && out.size() >= o.limit) {
+        const std::size_t n = it->first.size() + it->second.size();
+        if ((o.limit != 0 && out.size() >= o.limit) ||
+            (o.max_bytes != 0 && !out.empty() && bytes + n > o.max_bytes)) {
             more = true;
             return false;
         }
         out.push_back({it->first, it->second});
+        bytes += n;
         return true;
     };
     if (!o.reverse) {

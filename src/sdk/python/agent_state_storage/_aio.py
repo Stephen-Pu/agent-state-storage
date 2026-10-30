@@ -47,8 +47,19 @@ class AsyncClient:
         return (await self._call(self._stub.AppendItems, req)).next_seq
 
     async def get_items(self, session: str, limit: int | None = None) -> list[bytes]:
-        req = pb.GetItemsRequest(tenant=self.tenant, session=session, limit=limit or 0)
-        return list((await self._call(self._stub.GetItems, req)).items)
+        pages: list[list[bytes]] = []
+        remaining, before = limit, 0
+        while remaining is None or remaining > 0:
+            req = pb.GetItemsRequest(tenant=self.tenant, session=session,
+                                     limit=remaining or 0, before_seq=before)
+            resp = await self._call(self._stub.GetItems, req)
+            pages.append(list(resp.items))
+            if remaining is not None:
+                remaining -= len(resp.items)
+            if not resp.has_more or not resp.items:
+                break
+            before = resp.first_seq
+        return [item for page in reversed(pages) for item in page]
 
     async def pop_item(self, session: str) -> bytes | None:
         resp = await self._call(self._stub.PopItem, pb.PopItemRequest(tenant=self.tenant, session=session))

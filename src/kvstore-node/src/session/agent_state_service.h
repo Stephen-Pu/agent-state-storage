@@ -37,6 +37,8 @@ class AgentStateServiceImpl final : public asv1::AgentState::Service {
    public:
     static constexpr std::size_t kMaxValueBytes = 4u << 20;
     static constexpr uint32_t    kMaxScanPage   = 1000;
+    // Payload per GetItems / ScanRecords page (at least one entry is sent).
+    static constexpr std::size_t kMaxPageBytes  = 4u << 20;
 
     // Both stores are borrowed and must outlive the service.
     AgentStateServiceImpl(OrderedLogStore* store, BlobStore* blobs);

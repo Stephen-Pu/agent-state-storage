@@ -22,20 +22,26 @@ class AppendItemsResponse(_message.Message):
     def __init__(self, next_seq: _Optional[int] = ...) -> None: ...
 
 class GetItemsRequest(_message.Message):
-    __slots__ = ("tenant", "session", "limit")
+    __slots__ = ("tenant", "session", "limit", "before_seq")
     TENANT_FIELD_NUMBER: _ClassVar[int]
     SESSION_FIELD_NUMBER: _ClassVar[int]
     LIMIT_FIELD_NUMBER: _ClassVar[int]
+    BEFORE_SEQ_FIELD_NUMBER: _ClassVar[int]
     tenant: str
     session: str
     limit: int
-    def __init__(self, tenant: _Optional[str] = ..., session: _Optional[str] = ..., limit: _Optional[int] = ...) -> None: ...
+    before_seq: int
+    def __init__(self, tenant: _Optional[str] = ..., session: _Optional[str] = ..., limit: _Optional[int] = ..., before_seq: _Optional[int] = ...) -> None: ...
 
 class GetItemsResponse(_message.Message):
-    __slots__ = ("items",)
+    __slots__ = ("items", "has_more", "first_seq")
     ITEMS_FIELD_NUMBER: _ClassVar[int]
+    HAS_MORE_FIELD_NUMBER: _ClassVar[int]
+    FIRST_SEQ_FIELD_NUMBER: _ClassVar[int]
     items: _containers.RepeatedScalarFieldContainer[bytes]
-    def __init__(self, items: _Optional[_Iterable[bytes]] = ...) -> None: ...
+    has_more: bool
+    first_seq: int
+    def __init__(self, items: _Optional[_Iterable[bytes]] = ..., has_more: bool = ..., first_seq: _Optional[int] = ...) -> None: ...
 
 class PopItemRequest(_message.Message):
     __slots__ = ("tenant", "session")

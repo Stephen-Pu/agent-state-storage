@@ -39,8 +39,10 @@ struct ScanOptions {
     std::string prefix;
     std::string start_after;  // exclusive; empty = from the start of the prefix
     std::string end_before;   // exclusive; empty = to the end of the prefix
-    std::size_t limit   = 0;  // 0 = no limit
-    bool        reverse = false;
+    std::size_t limit     = 0;  // 0 = no limit
+    std::size_t max_bytes = 0;  // stop once keys + values would exceed this; 0 = no cap.
+                                // At least one entry is always returned.
+    bool        reverse   = false;
 };
 
 struct KV {
@@ -71,7 +73,7 @@ class OrderedLogStore {
 
     // Keys under o.prefix strictly between o.start_after and o.end_before, in
     // key order (descending when o.reverse). *has_more is true when o.limit
-    // cut the result short.
+    // or o.max_bytes cut the result short.
     std::vector<KV> Scan(const ScanOptions& o, bool* has_more) const;
 
     // Delete every key under `prefix` in one batch. Returns the count deleted;

@@ -23,6 +23,7 @@ This table describes the current code, including the gaps. It is updated with th
 ## Known gaps
 
 - ⚠️ **Tenant-to-certificate binding is off in the node binary.** With mTLS on, any client holding a certificate from the cluster CA can name any tenant in its requests. The check exists (`NodeDataServiceImpl::EnableTenantCertBinding`) but `kvstore-node` never enables it.
+- ⚠️ **Without TLS the session API trusts the request's tenant.** Anyone who can reach the port can read or erase any tenant's agent state by naming the tenant. The node prints a startup warning in this mode; it does not refuse to start.
 - ⚠️ **A node started without TLS material listens in plaintext on `0.0.0.0`.** That is meant for local development only. In this mode the tenant is whatever the client claims. Always configure mTLS outside a single machine.
 - ⚠️ **The in-cluster etcd still serves clients over plain HTTP.** TLS material is mounted, but the client listener switches to HTTPS only once every caller speaks TLS (operator phase H-4).
 - The DRAM and NVMe tiers are not encrypted at rest.

@@ -146,12 +146,21 @@ Status AgentStateServiceImpl::GetItems(Ctx* ctx, const asv1::GetItemsRequest* re
     if (auto st = ResolveTenant(ctx, req->tenant(), &tenant); !st.ok()) return st;
     if (req->session().empty()) return Invalid("session is required");
     ScanOptions o;
-    o.prefix  = ItemPrefix(tenant, req->session());
-    o.limit   = req->limit();
-    o.reverse = req->limit() != 0;
+    o.prefix    = ItemPrefix(tenant, req->session());
+    o.limit     = req->limit();
+    o.max_bytes = kMaxPageBytes;
+    o.reverse   = true;  // newest first, then flipped to oldest first
+    if (req->before_seq() != 0) {
+        o.end_before = o.prefix;
+        PutU64BE(&o.end_before, req->before_seq());
+    }
     bool more = false;
     auto kvs  = store_->Scan(o, &more);
-    if (o.reverse) std::reverse(kvs.begin(), kvs.end());
+    std::reverse(kvs.begin(), kvs.end());
+    if (!kvs.empty()) {
+        resp->set_first_seq(GetU64BE(std::string_view(kvs[0].key).substr(o.prefix.size())));
+    }
+    resp->set_has_more(more);
     for (auto& kv : kvs) resp->add_items(std::move(kv.value));
     return Status::OK;
 }
@@ -273,8 +282,9 @@ Status AgentStateServiceImpl::ScanRecords(Ctx* ctx, const asv1::ScanRecordsReque
     o.prefix = base + req->prefix();
     if (!req->start_after().empty()) o.start_after = base + req->start_after();
     if (!req->end_before().empty()) o.end_before = base + req->end_before();
-    o.limit   = req->limit() == 0 || req->limit() > kMaxScanPage ? kMaxScanPage : req->limit();
-    o.reverse = req->reverse();
+    o.limit     = req->limit() == 0 || req->limit() > kMaxScanPage ? kMaxScanPage : req->limit();
+    o.max_bytes = kMaxPageBytes;
+    o.reverse   = req->reverse();
     bool more = false;
     for (auto& kv : store_->Scan(o, &more)) {
         auto* r = resp->add_records();

@@ -75,6 +75,9 @@ graph = builder.compile(checkpointer=AgentStateSaver(client), store=AgentStateSt
 - **OpenAI Agents SDK**: `AgentStateSession` implements the SDK's `Session` protocol; `AgentStateSnapshotClient` stores sandbox workspace snapshots for a `RemoteSnapshotSpec`.
 - **LangGraph**: `AgentStateSaver` passes LangGraph's checkpointer conformance suite (put, writes, get, list, delete, copy thread); `AgentStateStore` is a `BaseStore` with filters and namespaces (no vector search yet).
 - **gRPC API** (`agentstate.v1`, [proto](src/core/proto/agentstate.proto)): per-session item logs, an ordered record space with atomic batches, and streamed blobs, all scoped to a tenant. With mTLS the tenant comes from the client certificate.
+- **Limits**: 4 MiB per item or record value, 64 MiB per request, 4 GiB per blob; reads page automatically. One node process per `--state-dir` (enforced with a lock).
+
+> ⚠️ Without `--tls-*` flags the node listens in plaintext and trusts the tenant each request names; it prints a warning at startup. Keep that mode on one trusted machine, and use mTLS anywhere else ([SECURITY.md](SECURITY.md)).
 
 ---
 

@@ -382,6 +382,48 @@ TEST_F(AgentStateServiceTest, OversizeValueIsRejected) {
     EXPECT_TRUE(Keys(Scan("t", "")).empty());
 }
 
+TEST_F(AgentStateServiceTest, GetItemsPagesByBytes) {
+    std::vector<std::string> all;
+    for (int i = 0; i < 6; ++i) {
+        all.push_back(std::string(1500 * 1024, static_cast<char>('a' + i)));
+        ASSERT_TRUE(Append("t", "big", {all.back()}).ok());
+    }
+    std::vector<std::string> got;
+    uint64_t before = 0;
+    int pages = 0;
+    for (;;) {
+        ::grpc::ClientContext ctx;
+        asv1::GetItemsRequest req;
+        req.set_tenant("t");
+        req.set_session("big");
+        req.set_before_seq(before);
+        asv1::GetItemsResponse resp;
+        ASSERT_TRUE(stub_->GetItems(&ctx, req, &resp).ok());
+        ++pages;
+        std::size_t bytes = 0;
+        for (const auto& it : resp.items()) bytes += it.size();
+        EXPECT_LE(bytes, AgentStateServiceImpl::kMaxPageBytes + 1500 * 1024);
+        got.insert(got.begin(), resp.items().begin(), resp.items().end());
+        if (!resp.has_more()) break;
+        before = resp.first_seq();
+    }
+    EXPECT_GT(pages, 1);
+    EXPECT_EQ(got, all);
+}
+
+TEST_F(AgentStateServiceTest, ScanPageIsCappedByBytes) {
+    for (int i = 0; i < 6; ++i) {
+        ASSERT_TRUE(Write("t", {{"big/" + std::to_string(i), std::string(1500 * 1024, 'x')}}).ok());
+    }
+    auto first = Scan("t", "big/");
+    EXPECT_TRUE(first.has_more());
+    EXPECT_GE(first.records_size(), 1);
+    EXPECT_LT(first.records_size(), 6);
+    std::size_t bytes = 0;
+    for (const auto& r : first.records()) bytes += r.value().size();
+    EXPECT_LE(bytes, AgentStateServiceImpl::kMaxPageBytes + 1500 * 1024);
+}
+
 // ---- TLS: tenant comes from the client certificate ------------------------
 
 namespace {
@@ -503,6 +545,20 @@ TEST(AgentStateServiceWiring, TwoServicesShareOnePort) {
         req.add_items("x");
         asv1::AppendItemsResponse resp;
         EXPECT_TRUE(stub->AppendItems(&ctx, req, &resp).ok());
+    }
+    {
+        // Two values just under the per-value limit in one request: more
+        // than gRPC's default 4 MiB message size.
+        auto stub = asv1::AgentState::NewStub(ch);
+        ::grpc::ClientContext ctx;
+        asv1::AppendItemsRequest req;
+        req.set_tenant("t");
+        req.set_session("two-big");
+        req.add_items(std::string(2500 * 1024, 'a'));
+        req.add_items(std::string(2500 * 1024, 'b'));
+        asv1::AppendItemsResponse resp;
+        auto st = stub->AppendItems(&ctx, req, &resp);
+        EXPECT_TRUE(st.ok()) << st.error_message();
     }
     {
         auto stub = kvcache::proto::NodeData::NewStub(ch);

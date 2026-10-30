@@ -10,10 +10,15 @@ from __future__ import annotations
 import struct
 
 
-def pack(*parts: str | bytes) -> bytes:
+def pack(*parts: object) -> bytes:
+    """Frame each part; bytes stay as they are, anything else is str()-encoded.
+
+    LangGraph allows non-string thread ids (an int 7 is the thread "7", as in
+    its own savers); bytes(7) would be seven NUL bytes instead.
+    """
     out = bytearray()
     for p in parts:
-        b = p.encode() if isinstance(p, str) else bytes(p)
+        b = bytes(p) if isinstance(p, (bytes, bytearray, memoryview)) else str(p).encode()
         out += struct.pack(">I", len(b))
         out += b
     return bytes(out)

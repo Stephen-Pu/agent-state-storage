@@ -54,9 +54,20 @@ class Client:
         return self._call(self._stub.AppendItems, req).next_seq
 
     def get_items(self, session: str, limit: int | None = None) -> list[bytes]:
-        """The latest `limit` items (all when None), oldest first."""
-        req = pb.GetItemsRequest(tenant=self.tenant, session=session, limit=limit or 0)
-        return list(self._call(self._stub.GetItems, req).items)
+        """The latest `limit` items (all when None), oldest first, paging past message limits."""
+        pages: list[list[bytes]] = []
+        remaining, before = limit, 0
+        while remaining is None or remaining > 0:
+            req = pb.GetItemsRequest(tenant=self.tenant, session=session,
+                                     limit=remaining or 0, before_seq=before)
+            resp = self._call(self._stub.GetItems, req)
+            pages.append(list(resp.items))
+            if remaining is not None:
+                remaining -= len(resp.items)
+            if not resp.has_more or not resp.items:
+                break
+            before = resp.first_seq
+        return [item for page in reversed(pages) for item in page]
 
     def pop_item(self, session: str) -> bytes | None:
         resp = self._call(self._stub.PopItem, pb.PopItemRequest(tenant=self.tenant, session=session))
