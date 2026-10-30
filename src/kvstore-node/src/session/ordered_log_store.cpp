@@ -2,6 +2,7 @@
 #include "session/ordered_log_store.h"
 
 #include <fcntl.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -94,6 +95,17 @@ bool WriteAll(int fd, const char* p, std::size_t n, std::string* err) {
     return true;
 }
 
+// Make a create or rename in `path`'s directory durable.
+void FsyncParentDir(const std::string& path) {
+    const auto slash = path.find_last_of('/');
+    const std::string dir = slash == std::string::npos ? "." : path.substr(0, slash + 1);
+    const int dfd = ::open(dir.c_str(), O_RDONLY);
+    if (dfd >= 0) {
+        ::fsync(dfd);
+        ::close(dfd);
+    }
+}
+
 bool PrefixMatches(const std::string& key, const std::string& prefix) {
     return key.size() >= prefix.size() && key.compare(0, prefix.size(), prefix) == 0;
 }
@@ -107,13 +119,26 @@ std::unique_ptr<OrderedLogStore> OrderedLogStore::Open(const std::string& path, 
     if (path.empty()) return s;
 
     s->path_ = path;
+    const bool existed = ::access(path.c_str(), F_OK) == 0;
     s->fd_   = ::open(path.c_str(), O_RDWR | O_CREAT, 0600);
     if (s->fd_ < 0) {
         if (err) *err = "open " + path + ": " + std::strerror(errno);
         return nullptr;
     }
+    // One writer per log: a second process appending at its own offset would
+    // overwrite acknowledged records. The lock is released when fd_ closes.
+    if (::flock(s->fd_, LOCK_EX | LOCK_NB) != 0) {
+        if (err) {
+            *err = errno == EWOULDBLOCK ? path + " is in use by another process"
+                                        : "flock " + path + ": " + std::strerror(errno);
+        }
+        return nullptr;
+    }
+    if (!existed) FsyncParentDir(path);
 
-    // Replay every complete record; stop at the first torn or corrupt one.
+    // Replay every complete record. A bad record at the end is a torn append
+    // and is truncated; a bad record with more data after it is corruption,
+    // and Open refuses rather than delete what follows.
     std::vector<uint8_t> buf;
     struct stat st {};
     if (::fstat(s->fd_, &st) != 0) {
@@ -134,12 +159,29 @@ std::unique_ptr<OrderedLogStore> OrderedLogStore::Open(const std::string& path, 
     std::size_t off = 0;
     std::vector<Mutation> batch;
     while (buf.size() - off >= 12) {
-        const uint32_t rec_len = GetU32(buf.data() + off);
-        if (rec_len < 12 || rec_len > buf.size() - off) break;
-        const uint8_t* body    = buf.data() + off + 4;
-        const std::size_t blen = rec_len - 8;
-        if (Crc32(body, blen) != GetU32(buf.data() + off + rec_len - 4)) break;
-        if (!DecodeBody(body, blen, &batch)) break;
+        const std::size_t remaining = buf.size() - off;
+        const uint32_t rec_len      = GetU32(buf.data() + off);
+        bool ok = rec_len >= 12 && rec_len <= remaining;
+        if (ok) {
+            const uint8_t* body    = buf.data() + off + 4;
+            const std::size_t blen = rec_len - 8;
+            ok = Crc32(body, blen) == GetU32(buf.data() + off + rec_len - 4) &&
+                 DecodeBody(body, blen, &batch);
+        }
+        if (!ok) {
+            const bool torn_tail =
+                rec_len > remaining || (rec_len >= 12 && rec_len == remaining) ||
+                std::all_of(buf.begin() + static_cast<std::ptrdiff_t>(off), buf.end(),
+                            [](uint8_t b) { return b == 0; });
+            if (!torn_tail) {
+                if (err) {
+                    *err = path + " is corrupt at offset " + std::to_string(off) +
+                           " with complete records after it; refusing to truncate";
+                }
+                return nullptr;
+            }
+            break;
+        }
         s->ApplyToMapLocked(batch);
         off += rec_len;
     }
@@ -205,9 +247,17 @@ bool OrderedLogStore::MaybeCompactLocked(std::string* err) {
     if (log_bytes_ <= std::max(compact_min_bytes_, 2 * live_bytes_)) return true;
 
     const std::string tmp = path_ + ".compact";
-    const int tfd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    const int tfd = ::open(tmp.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0600);
     if (tfd < 0) {
         if (err) *err = "open " + tmp + ": " + std::strerror(errno);
+        return false;
+    }
+    // Lock the new file before it takes the log's name, so no other process
+    // can claim it between the rename and our switch to it.
+    if (::flock(tfd, LOCK_EX | LOCK_NB) != 0) {
+        if (err) *err = std::string("flock: ") + std::strerror(errno);
+        ::close(tfd);
+        ::unlink(tmp.c_str());
         return false;
     }
     std::size_t written = 0;
@@ -232,22 +282,20 @@ bool OrderedLogStore::MaybeCompactLocked(std::string* err) {
         if (err) *err = std::string("fsync: ") + std::strerror(errno);
         ok = false;
     }
-    ::close(tfd);
     if (ok && ::rename(tmp.c_str(), path_.c_str()) != 0) {
         if (err) *err = std::string("rename: ") + std::strerror(errno);
         ok = false;
     }
     if (!ok) {
+        ::close(tfd);
         ::unlink(tmp.c_str());
         return false;
     }
-    const int nfd = ::open(path_.c_str(), O_RDWR, 0600);
-    if (nfd < 0) {
-        if (err) *err = "reopen " + path_ + ": " + std::strerror(errno);
-        return false;
-    }
+    FsyncParentDir(path_);
+    // Keep appending through the compacted file's own descriptor: no reopen
+    // that could fail and leave us writing to the unlinked old log.
     ::close(fd_);
-    fd_        = nfd;
+    fd_        = tfd;
     log_bytes_ = written;
     ::lseek(fd_, static_cast<off_t>(log_bytes_), SEEK_SET);
     return true;
