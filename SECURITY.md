@@ -13,7 +13,8 @@ This table describes the current code, including the gaps. It is updated with th
 | Area | Today | Where |
 |---|---|---|
 | Node gRPC transport | **mTLS when TLS material is configured.** The Helm chart and the operator turn it on by default (cert-manager issues the certificates). | `kvstore-node/src/grpc/grpc_server.*`, `deploy/helm/kvcache/values.yaml` (`mtls.enabled: true`) |
-| Tenant identity | The code can resolve the tenant **from the client certificate** and reject a request that names another tenant, but the node binary does **not** turn this on yet (see Known gaps). | `kvstore-node/src/security/mtls.*`, `grpc/node_data_service.cpp` (`EnableTenantCertBinding`) |
+| Session API tenant (`agentstate.v1`) | With mTLS the tenant is resolved **from the client certificate**; a request naming another tenant gets `PERMISSION_DENIED`. Without TLS the request's tenant field is trusted (local development only). Every stored key starts with the tenant. | `kvstore-node/src/session/agent_state_service.*`, `main.cpp` (`EnableCertTenant`) |
+| Tenant identity (KV `NodeData`) | The code can resolve the tenant **from the client certificate** and reject a request that names another tenant, but the node binary does **not** turn this on yet (see Known gaps). | `kvstore-node/src/security/mtls.*`, `grpc/node_data_service.cpp` (`EnableTenantCertBinding`) |
 | Cross-tenant isolation of cached state | Every state identity includes the tenant, so one tenant cannot look up or probe another tenant's prefixes. Quotas are per tenant. | `core/common/state_identity.h`, `core/common/locator.h` |
 | Encryption at rest | AES-256-GCM, authenticated, for the cold tier (`EncryptingColdTier`). Not yet for the DRAM or NVMe tiers. | `kvstore-node/src/tier/encrypting_cold_tier.*` |
 | Deserialization | No Python `pickle` or other object deserialization on any wire path. The wire formats are protobuf / gRPC and the C ABI. | — |

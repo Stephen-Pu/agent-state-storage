@@ -12,7 +12,7 @@
 
 Every major platform now does a piece of this, inside its own walls. **AgentStateStorage is the open, self-hosted version**: one session tree for every kind of agent state, with compliance built in, on your infrastructure, under any inference engine and any cloud.
 
-> **Status, honestly.** The KV state layer underneath (identity addressing, tiering, the keep-or-recompute brain, hard multi-tenancy) is **built and tested**. The session layer on top (session tree, erase · hold · audit, SDKs and integrations) is **what we are building now**. The [capability matrix](#capability-matrix) is the contract.
+> **Status, honestly.** The KV state layer underneath (identity addressing, tiering, the keep-or-recompute brain, hard multi-tenancy) is **built and tested**. The first piece of the session layer is **usable today on one node**: a gRPC session API, a Python SDK, and drop-in persistence for the **OpenAI Agents SDK** and **LangGraph** ([try it](#try-it)). The session tree and erase · hold · audit are **what we are building now**. The [capability matrix](#capability-matrix) is the contract.
 
 ---
 
@@ -44,7 +44,37 @@ ss.resume(s2)                                     # after a crash: no tool call 
 receipt = ss.erase(subject="user-42")             # cascades along lineage; legal holds respected
 ```
 
-First integrations: **OpenAI Agents SDK** (sessions and sandbox workspace snapshots) and **LangGraph** (checkpointer and store), then an **MCP server** that hands out session handles, as the MCP 2026-07-28 spec expects for cross-call state.
+First integrations: **OpenAI Agents SDK** (sessions and sandbox workspace snapshots) and **LangGraph** (checkpointer and store), both shipped in M1 (below), then an **MCP server** that hands out session handles, as the MCP 2026-07-28 spec expects for cross-call state.
+
+## Try it
+
+Works today, single node. One node serves every agent; state survives a restart.
+
+```bash
+kvstore-node --grpc-port 7000 --state-dir ./agent-state      # build: see BUILD.md
+pip install -e "src/sdk/python[openai-agents,langgraph]"
+python examples/m1_quickstart.py                            # no API key needed; run it twice
+```
+
+```python
+from agents import Runner
+from agent_state_storage import AsyncClient, Client
+from agent_state_storage.openai_agents import AgentStateSession
+from agent_state_storage.langgraph import AgentStateSaver, AgentStateStore
+
+# OpenAI Agents SDK (inside an async function): history that survives restarts and can be forked
+session = AgentStateSession("conv-1", AsyncClient("localhost:7000", tenant="acme"))
+result = await Runner.run(agent, "hi", session=session)
+branch = await session.fork("conv-1-try-b")
+
+# LangGraph: checkpoints (time travel, copy_thread) and long-term memory
+client = Client("localhost:7000", tenant="acme")
+graph = builder.compile(checkpointer=AgentStateSaver(client), store=AgentStateStore(client))
+```
+
+- **OpenAI Agents SDK**: `AgentStateSession` implements the SDK's `Session` protocol; `AgentStateSnapshotClient` stores sandbox workspace snapshots for a `RemoteSnapshotSpec`.
+- **LangGraph**: `AgentStateSaver` passes LangGraph's checkpointer conformance suite (put, writes, get, list, delete, copy thread); `AgentStateStore` is a `BaseStore` with filters and namespaces (no vector search yet).
+- **gRPC API** (`agentstate.v1`, [proto](src/core/proto/agentstate.proto)): per-session item logs, an ordered record space with atomic batches, and streamed blobs, all scoped to a tenant. With mTLS the tenant comes from the client certificate.
 
 ---
 
@@ -76,10 +106,10 @@ As of 2026-10. ✅ built and tested · 🟡 partial · 🚧 next (M1–M2) · �
 | KV state: identity addressing, DRAM/NVMe/object tiers, keep-or-recompute brain, per-tenant quotas | ✅ | Single node |
 | KV state across nodes (zero-copy data path, RDMA backends) | ⏳ | Interfaces in place; in-process today |
 | Durable ingest for irreplaceable state (WAL, crash recovery) | 🟡 | Single node; survives a process restart, not a node loss |
-| Session tree: snapshot, fork, resume, diff | 🚧 | M2; conversation, memory and workspace first, KV prefix after the cross-node path |
+| Session tree: snapshot, fork, resume, diff | 🚧 | M2. Today: resume after a restart, and fork by copy (conversations, LangGraph threads) |
 | Erase · hold · audit | 🚧 | M2 |
-| Python SDK + gRPC API | 🚧 | M1 |
-| OpenAI Agents SDK, LangGraph integrations | 🚧 | M1 |
+| Python SDK + gRPC API | ✅ | Single node; `agentstate.v1` items, records, blobs |
+| OpenAI Agents SDK, LangGraph integrations | ✅ | Session + sandbox snapshots; checkpointer + store (no vector search) |
 | MCP server | ⏳ | M3 |
 | TypeScript SDK | ⏳ | After M1 |
 | Agent memory (versioned, immutable; consolidation writes a new version) | 🚧 | M2 |
@@ -111,7 +141,8 @@ The adapters under `src/adapters/` other than vLLM are interface shims, not engi
 - **L4 integration**: vLLM connector, gRPC service, OTLP traces, Prometheus metrics.
 - **Kubernetes**: Helm chart, operator, `KVCacheTenant` CRD, kind end-to-end test.
 - **B-plane, first step**: durable single-node ingest (`StatePut` / `StateGet` over a WAL, with DRAM degradation and replay).
-- **Tests**: 500+ C++ tests (ctest) plus Go and Python suites; CI runs on Ubuntu 22.04.
+- **Session API (M1)**: `agentstate.v1` gRPC service in `kvstore-node` (`--state-dir` for durability), Python SDK, OpenAI Agents SDK and LangGraph integrations.
+- **Tests**: 580+ C++ tests (ctest) plus Go and Python suites, including LangGraph's checkpointer conformance suite; CI runs on Ubuntu 22.04, and on 24.04 for the gRPC node and the Python SDK.
 
 Security posture and known gaps: [SECURITY.md](SECURITY.md).
 
@@ -132,8 +163,8 @@ One 100K-token RAG query with a 90K shared prefix, Llama-3.1-70B on 8× H100, 95
 
 | Milestone | Scope |
 |---|---|
-| **M0** (now) | License and governance, CI green, honest matrix |
-| **M1** | gRPC API + Python SDK; OpenAI Agents SDK and LangGraph integrations, single node |
+| **M0** ✅ | License and governance, CI green, honest matrix |
+| **M1** ✅ | gRPC API + Python SDK; OpenAI Agents SDK and LangGraph integrations, single node |
 | **M2** | Session tree + erase · hold · audit, with a demo: fork a coding agent eight ways, kill it, resume it, erase a user and get a receipt |
 | **M3** | MCP server; reproducible agent-trace benchmark |
 | **M4** | vLLM / SGLang offload tiers; cross-node data path; KV prefix in the session tree |
