@@ -31,6 +31,7 @@ set(NODE_CORE_SRCS
     src/persist/state_wal.cpp
     # M1 — agentstate.v1 storage
     src/session/ordered_log_store.cpp
+    src/session/blob_store.cpp
     # ingest
     src/ingest/mutable_buffer.cpp
     src/ingest/watermark.cpp
