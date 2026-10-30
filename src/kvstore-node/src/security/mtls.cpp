@@ -235,7 +235,7 @@ struct X509Free  { void operator()(X509* x)  const noexcept { if (x) X509_free(x
 // Pull the subject CN out of an X509 via the NID path (handles
 // multi-RDN subjects + UTF-8 correctly, which the string scan can't).
 std::string SubjectCn(X509* cert) {
-    X509_NAME* subj = X509_get_subject_name(cert);
+    const X509_NAME* subj = X509_get_subject_name(cert);
     if (!subj) return {};
     // First pass: ask for required buffer size.
     int len = X509_NAME_get_text_by_NID(subj, NID_commonName, nullptr, 0);

@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #ifdef KVCACHE_ENABLE_URING
+#  include <future>
 #  include <liburing.h>
 #endif
 
@@ -42,10 +43,6 @@ namespace kvcache::node::tier {
 //     tagged with a static sentinel address, and joins the reaper.
 //     The reaper drains pending real I/O before exiting (loop
 //     condition: running || in_flight > 0).
-
-#ifdef KVCACHE_ENABLE_URING
-#include <future>
-#endif
 
 struct NvmeTier::UringImpl {
 #ifdef KVCACHE_ENABLE_URING

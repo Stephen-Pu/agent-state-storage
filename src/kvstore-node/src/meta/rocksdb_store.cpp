@@ -29,6 +29,24 @@ namespace kvcache::node::meta {
 // below; gate them out of the facade build to silence -Wunused-function.
 namespace {
 
+// DB::Open with column families takes std::unique_ptr<DB>* on recent RocksDB
+// (11.x) and DB** on older releases (Ubuntu 22.04 ships 6.x). Pick whichever
+// overload exists at compile time.
+template <typename D, typename O, typename C, typename H>
+auto OpenDbCompat(const O& opts, const std::string& path, const C& cfs, H* handles,
+                  std::unique_ptr<D>* out, int)
+    -> decltype(D::Open(opts, path, cfs, handles, out)) {
+    return D::Open(opts, path, cfs, handles, out);
+}
+template <typename D, typename O, typename C, typename H>
+rocksdb::Status OpenDbCompat(const O& opts, const std::string& path, const C& cfs,
+                             H* handles, std::unique_ptr<D>* out, long) {
+    D* raw = nullptr;
+    rocksdb::Status s = D::Open(opts, path, cfs, handles, &raw);
+    out->reset(raw);
+    return s;
+}
+
 inline std::string BeU64(uint64_t v) {
     std::string s(8, '\0');
     for (int i = 7; i >= 0; --i) { s[i] = static_cast<char>(v & 0xff); v >>= 8; }
@@ -259,11 +277,10 @@ std::unique_ptr<RocksdbStore> RocksdbStore::Open(const Options& opts, std::strin
         {std::string(kCfAuditBufferOverflow), cf_plain},
     };
     std::vector<ColumnFamilyHandle*> handles;
-    // rocksdb 11.x: DB::Open takes std::unique_ptr<DB>*. Open into a
-    // local unique_ptr then release into the raw db_ member (the dtor
-    // does the matching delete).
+    // Open into a local unique_ptr then release into the raw db_ member (the
+    // dtor does the matching delete). OpenDbCompat handles both Open overloads.
     std::unique_ptr<DB> db_holder;
-    Status s = DB::Open(db_opts, opts.path, cfs, &handles, &db_holder);
+    Status s = OpenDbCompat<DB>(db_opts, opts.path, cfs, &handles, &db_holder, 0);
     if (!s.ok()) { if (err) *err = s.ToString(); return nullptr; }
     store->db_ = db_holder.release();
     store->cf_default_ = handles[0];

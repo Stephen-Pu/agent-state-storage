@@ -139,6 +139,11 @@ foreach(_tier_t test_pinned_tier test_dram_tier test_dram_tier_evict_kind test_n
     if(OpenSSL_FOUND)
         target_link_libraries(${_tier_t} PRIVATE OpenSSL::Crypto)
     endif()
+    # B1 — nvme_tier.cpp calls liburing when the io_uring path is enabled.
+    if(KVCACHE_ENABLE_URING)
+        target_include_directories(${_tier_t} PRIVATE ${LIBURING_INCLUDE_DIRS})
+        target_link_libraries(${_tier_t} PRIVATE ${LIBURING_LIBRARIES})
+    endif()
     # A2 — pinned_tier.cpp pulls the CUDA runtime when the cudaHostAlloc path
     # is enabled.
     if(KVCACHE_ENABLE_CUDA)

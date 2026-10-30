@@ -95,7 +95,7 @@ TEST(HrwResolverTest, AddingNodeMovesMinimalKeys) {
 
 TEST(HrwResolverTest, AsCallbackDrivesRouterEndToEnd) {
     HrwResolver hrw;
-    hrw.SetNodes({"node-x", "node-y"});
+    hrw.SetNodes(std::vector<std::string>{"node-x", "node-y"});
 
     routing_cache::RoutingCache cache;
     auto bloom = bloom_view::BloomView({

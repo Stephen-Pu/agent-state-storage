@@ -304,11 +304,17 @@ if(KVCACHE_BUILD_TESTS)
   if(NOT GTest_FOUND)
     message(STATUS "GTest not found locally; fetching v1.14.0 via FetchContent")
     include(FetchContent)
+    # DOWNLOAD_EXTRACT_TIMESTAMP exists from CMake 3.24; on 3.22 (Ubuntu
+    # 22.04, our CI image) it is not a keyword and corrupts URL_HASH.
+    set(_kv_gtest_ts_opt)
+    if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.24)
+      set(_kv_gtest_ts_opt DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+    endif()
     FetchContent_Declare(
       googletest
       URL      https://github.com/google/googletest/archive/refs/tags/v1.14.0.tar.gz
       URL_HASH SHA256=8ad598c73ad796e0d8280b082cebd82a630d73e73cd3c70057938a6501bba5d7
-      DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+      ${_kv_gtest_ts_opt}
     )
     set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(googletest)
