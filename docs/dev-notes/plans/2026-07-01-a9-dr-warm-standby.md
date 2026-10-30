@@ -8,7 +8,7 @@
 
 **Tech Stack:** C++20, CMake+Ninja, GoogleTest (FetchContent), the existing `HeadlessNode` / `EventStream` / ART / tier stack.
 
-**Spec:** `docs/superpowers/specs/2026-07-01-a9-cross-cluster-dr-federation-design.md`. This plan **refines spec §3 step 4**: the standby commit is keyed by `chunk_path` (via `ReplicaFetch` + `SealByChunkPath`), not by tokens — because the replication event carries a locator, not tokens. The spec §3/§6 text is updated to match.
+**Spec:** `docs/dev-notes/specs/2026-07-01-a9-cross-cluster-dr-federation-design.md`. This plan **refines spec §3 step 4**: the standby commit is keyed by `chunk_path` (via `ReplicaFetch` + `SealByChunkPath`), not by tokens — because the replication event carries a locator, not tokens. The spec §3/§6 text is updated to match.
 
 ## Global Constraints
 

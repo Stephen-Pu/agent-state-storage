@@ -236,7 +236,7 @@ no Critical/Important findings.
 entry — single-node, WAL-backed B ingest end-to-end: `StatePut`/`StateGet`,
 WAL-first durability (fsync-per-append, survives **process restart**, not node
 loss), DRAM staging with a real `state_kind`, and demotion + replay-from-WAL on
-miss. See `docs/superpowers/specs/2026-07-20-b-plane-dram-ingest-design.md`.
+miss. See `docs/dev-notes/specs/2026-07-20-b-plane-dram-ingest-design.md`.
 **Still deferred:** replication, strong consistency, the lineage engine (⑭),
 the B1 Agent-Memory and B2 Durable-Execution subsystems, threading
 `StateIdentity` across the FFI/gRPC wire, bounded-memory WAL, and WAL

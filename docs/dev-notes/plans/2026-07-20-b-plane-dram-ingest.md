@@ -977,7 +977,7 @@ git commit -m "feat(b-ingest): HeadlessNode StatePut/StateGet — WAL-first inge
 
 - [ ] **Step 1: Update the verdict doc deferral**
 
-In `docs/design/ss2-spike-q3-verdict.md`, find the "**Still deferred:** the DRAM *store* path that would admit a B-class entry" line (~line 228) and reword to record that single-node WAL-backed ingest has landed, while replication / strong consistency / lineage / FFI-wire remain deferred. Cite the new spec: `docs/superpowers/specs/2026-07-20-b-plane-dram-ingest-design.md`.
+In `docs/design/ss2-spike-q3-verdict.md`, find the "**Still deferred:** the DRAM *store* path that would admit a B-class entry" line (~line 228) and reword to record that single-node WAL-backed ingest has landed, while replication / strong consistency / lineage / FFI-wire remain deferred. Cite the new spec: `docs/dev-notes/specs/2026-07-20-b-plane-dram-ingest-design.md`.
 
 - [ ] **Step 2: Update the README capability matrix — honestly**
 

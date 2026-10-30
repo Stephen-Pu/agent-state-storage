@@ -8,7 +8,7 @@
 
 **Tech Stack:** C++20, CMake+Ninja, gRPC + protobuf (already in the toolchain: `protoc`, `grpc_cpp_plugin`, `gRPC_DIR` set), GoogleTest. Verified locally via **in-process gRPC loopback** (a real `grpc::Server` + `NodeData::Stub` in one test process, the exact pattern of `src/tests/unit/grpc/node_data_service_test.cpp`). True multi-*cluster* network E2E stays deferred (needs a second cluster).
 
-**Spec:** `docs/superpowers/specs/2026-07-01-a9-cross-cluster-dr-federation-design.md` §6 ("`ReplicaFetch` ... gated by `VerifyInternalPeer` (A11) on the gRPC surface") and §9 (gRPC surface is the follow-on). This plan builds that follow-on.
+**Spec:** `docs/dev-notes/specs/2026-07-01-a9-cross-cluster-dr-federation-design.md` §6 ("`ReplicaFetch` ... gated by `VerifyInternalPeer` (A11) on the gRPC surface") and §9 (gRPC surface is the follow-on). This plan builds that follow-on.
 
 ## Global Constraints
 
