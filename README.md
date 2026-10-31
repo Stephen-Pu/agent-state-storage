@@ -85,18 +85,16 @@ graph = builder.compile(checkpointer=AgentStateSaver(client), store=AgentStateSt
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/architecture-dark.svg">
-  <img alt="Architecture layers: your agents; SDK and gRPC API; session layer (session tree, erase hold audit, keep-or-recompute brain); state (KV prefix, durable ingest, agent memory, execution state); spine (identity and lineage, DRAM to NVMe to object tiering, hard multi-tenancy and mTLS, cross-node data path); engines and storage. Each part is marked shipped, next or later." src="docs/assets/architecture-light.svg" width="100%">
+  <img alt="System architecture as of M1. Agents (OpenAI Agents SDK, LangGraph, your own loop: shipped; MCP clients: M3) reach the session-state plane through the Python SDK and gRPC, where mTLS supplies the tenant. Inference engines (vLLM: shipped; SGLang and Dynamo: M4; TensorRT-LLM: later) reach the KV-cache plane through the C ABI and gRPC, where tenant binding is still off. Inside one kvstore-node process: session state, agentstate.v1 with items, records and blobs, fsynced before acknowledgement, one replica on local disk; and the KV cache, NodeData with a content-identity prefix index, keep-or-recompute tiering and DRAM to NVMe to S3 or Alluxio. A planned session tree with erase, hold and audit (M2) spans both planes. Around the node: a control plane (etcd membership, HRW routing, operator and CRD, quotas: shipped) and peer nodes (lookup forwarding: shipped; cross-node data path: M4)." src="docs/assets/architecture-light.svg" width="100%">
 </picture>
 
-Underneath the session layer is one **spine** that every kind of state shares:
+One node process serves two planes, split by one question: *can it be recomputed?*
 
-1. **Identity and lineage addressing**: state is keyed by what produced it, so the system can answer "have I computed this before?" and "what was derived from this user?"
-2. **A keep-or-recompute brain**: for state that can be recomputed (KV, embeddings, tool results), keep it only when keeping is cheaper than recomputing.
-3. **Latency tiering**: DRAM → NVMe → object storage, with object storage (or an Alluxio multi-cloud UFS) as the durable floor.
-4. **Copy-on-write fork**, which the session tree builds on.
-5. **Hard multi-tenancy**: tenant identity from mTLS certificates, per-tenant quotas and priorities, no cross-tenant prefix probing.
+- **Session state (irreplaceable)**: conversation items, framework checkpoints and stores, and workspace blobs, served by `agentstate.v1`. Governed by durability: every write is fsynced before it is acknowledged. Today that is one replica on the node's local disk (`--state-dir`); replication and an object-storage copy are on the roadmap.
+- **KV cache (recomputable)**: attention KV prefixes, served by `NodeData` to inference engines. Governed by cost: content-identity addressing, a keep-or-recompute brain, and DRAM → NVMe → object storage tiering (S3 API, including an Alluxio multi-cloud UFS), with per-tenant quotas and priorities. Losing an entry costs a recompute, not data.
+- **The session tree (M2)** spans both. A snapshot references the items, records, blobs and KV prefix together, and lineage lets an erase cascade from a user to everything derived from them while a legal hold keeps the audit log.
 
-State splits into two planes by one question, *can it be recomputed?* **Recomputable** state (KV, embeddings, tool results) is a cache governed by cost. **Irreplaceable** state (memory, execution history) is governed by durability and compliance. One session tree spans both.
+Around the node sit a control plane (etcd membership, HRW routing, the Kubernetes operator and `KVCacheTenant` CRD, quotas) and peer nodes that forward lookups; the cross-node data path is M4. On the session API the tenant comes from the mTLS client certificate; on the KV API that binding exists but is not on yet (see [SECURITY.md](SECURITY.md)).
 
 ---
 
