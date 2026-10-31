@@ -8,7 +8,7 @@
 
 **Tech Stack:** C++20, CMake+Ninja, GoogleTest (FetchContent), the existing `kvstore-node` security + tier modules (`security/audit.h`, `tier/rest_cold_tier.h`'s `IHttpTransport`).
 
-**Spec:** `docs/superpowers/specs/2026-07-01-a10-regulated-mode-design.md`. This plan implements the **buildable local core** the spec calls out as unit-testable (§9): §4 BoundaryGuard (`Check`, rules, startup gate, fail-closed) and R2/R3. It **defers** (per the spec's own §6/§10/non-goals) FIPS provider integration, `IKeyProvider`/KMS, hash-chained audit, region/account-tag rule resolution, and the NIST control map (a doc artifact). Those are follow-ons; the requirement-predicate seam in Task 4 is where they later plug in.
+**Spec:** `docs/dev-notes/specs/2026-07-01-a10-regulated-mode-design.md`. This plan implements the **buildable local core** the spec calls out as unit-testable (§9): §4 BoundaryGuard (`Check`, rules, startup gate, fail-closed) and R2/R3. It **defers** (per the spec's own §6/§10/non-goals) FIPS provider integration, `IKeyProvider`/KMS, hash-chained audit, region/account-tag rule resolution, and the NIST control map (a doc artifact). Those are follow-ons; the requirement-predicate seam in Task 4 is where they later plug in.
 
 ## Global Constraints
 

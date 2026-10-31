@@ -73,7 +73,7 @@ cmake -S src -B build \
 
 > **Regulated Mode (A10)** is a runtime opt-in on the `kvstore-node` binary, not a
 > build flag: pass `--regulated-mode` with one or more `--boundary-allow <host-glob|CIDR>`
-> rules. Off by default ⇒ unchanged behavior. See `docs/superpowers/specs/2026-07-01-a10-regulated-mode-design.md`.
+> rules. Off by default ⇒ unchanged behavior. See `docs/dev-notes/specs/2026-07-01-a10-regulated-mode-design.md`.
 
 ### Outputs
 

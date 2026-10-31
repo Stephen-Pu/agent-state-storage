@@ -1,6 +1,7 @@
 #include "tier/pinned_tier.h"
 
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <cstring>
 #include <vector>
 
@@ -107,3 +108,30 @@ TEST(PinnedTierCudaTest, PoolIsRealPinnedMappedHostMemory) {
     t->Release(s->id);
 }
 #endif  // KVCACHE_HAVE_CUDA
+
+#if !KVCACHE_HAVE_CUDA
+#include <sys/resource.h>
+
+// A locked-memory limit (ulimit -l) smaller than the pool must not stop the
+// tier: it runs without page pinning and warns, as the mlock() fallback
+// already does. On Linux, MAP_LOCKED made mmap itself fail with EAGAIN.
+// (A process with CAP_IPC_LOCK, e.g. root, ignores the limit and passes
+// either way.)
+TEST(PinnedTierTest, MemlockLimitBelowPoolStillCreatesTier) {
+    struct rlimit old {};
+    ASSERT_EQ(::getrlimit(RLIMIT_MEMLOCK, &old), 0);
+    struct rlimit low = old;
+    low.rlim_cur = std::min<rlim_t>(64 * 1024, old.rlim_max);
+    ASSERT_EQ(::setrlimit(RLIMIT_MEMLOCK, &low), 0);
+
+    PinnedTier::Options o;
+    o.pool_bytes = 4u << 20;  // far above the 64 KiB limit
+    o.slot_bytes = 4096;
+    o.use_mlock  = true;
+    std::string err;
+    auto t = PinnedTier::Create(o, &err);
+    ::setrlimit(RLIMIT_MEMLOCK, &old);
+    ASSERT_NE(t, nullptr) << err;
+    EXPECT_EQ(t->SlotCount(), 1024u);
+}
+#endif

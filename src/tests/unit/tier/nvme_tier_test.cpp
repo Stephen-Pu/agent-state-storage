@@ -190,9 +190,13 @@ TEST(NvmeTierTest, UringAchievesConcurrencyAcrossWriters) {
 #ifndef KVCACHE_ENABLE_URING
     GTEST_SKIP() << "built without KVCACHE_ENABLE_URING";
 #else
+    constexpr int kWriters = 8;
+    constexpr int kPerWriter = 32;
+
     NvmeTier::Options o;
     o.path       = TmpPath("uring-mpc");
-    o.pool_bytes = 64 * 4096;
+    // One slot per key written below, so a full pool never fails a Put.
+    o.pool_bytes = kWriters * kPerWriter * 4096;
     o.slot_bytes = 4096;
     o.use_uring  = true;
     o.uring_queue_depth = 64;
@@ -202,8 +206,6 @@ TEST(NvmeTierTest, UringAchievesConcurrencyAcrossWriters) {
     ASSERT_NE(t, nullptr) << err;
     ASSERT_TRUE(t->UsingUring());
 
-    constexpr int kWriters = 8;
-    constexpr int kPerWriter = 32;
     std::atomic<int> errors{0};
     std::vector<std::thread> ts;
     for (int w = 0; w < kWriters; ++w) {

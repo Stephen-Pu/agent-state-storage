@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 440" width="1280" height="440" role="img" aria-label="AgentStateStorage: the open session layer for AI agents">
+<style>
+  .t  { font-family: Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; fill: #EAF0FB; }
+  .s  { font-family: Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; fill: #9DB0D3; }
+  .d  { font-family: Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; fill: #61739A; }
+  .m  { font-family: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace; }
+  .flow  { stroke-dasharray: 5 9; animation: flow 1.6s linear infinite; }
+  .pulse { animation: pulse 2.8s ease-in-out infinite; }
+  @keyframes flow  { to { stroke-dashoffset: -28; } }
+  @keyframes pulse { 0%,100% { opacity: .25; } 50% { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) {
+    .flow, .pulse { animation: none; }
+  }
+</style>
+<defs>
+  <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#05080F"/><stop offset="1" stop-color="#0B1530"/>
+  </linearGradient>
+  <linearGradient id="brand" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0" stop-color="#22D3EE"/><stop offset=".5" stop-color="#A78BFA"/>
+    <stop offset="1" stop-color="#FBBF24"/>
+  </linearGradient>
+  <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+    <path d="M32 0H0V32" fill="none" stroke="#1C2B4D" stroke-width="1" opacity=".55"/>
+  </pattern>
+  <radialGradient id="aura" cx=".5" cy=".5" r=".5">
+    <stop offset="0" stop-color="#A78BFA" stop-opacity="0.30"/>
+    <stop offset=".55" stop-color="#22D3EE" stop-opacity="0.10"/>
+    <stop offset="1" stop-color="#22D3EE" stop-opacity="0"/>
+  </radialGradient>
+  <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+    <feGaussianBlur stdDeviation="7"/>
+  </filter>
+</defs>
+<rect width="1280" height="440" rx="18" fill="url(#bg)"/>
+<rect width="1280" height="440" rx="18" fill="url(#grid)"/>
+<ellipse cx="990" cy="220" rx="300" ry="210" fill="url(#aura)"/>
+<g transform="translate(64,0)">
+<rect x="0" y="86" width="268" height="30" rx="15" fill="#22D3EE" fill-opacity=".1" stroke="#22D3EE" stroke-opacity=".5"/>
+<text x="16" y="106" font-size="13" letter-spacing="2" class="m" fill="#22D3EE">OPEN SOURCE · APACHE-2.0</text>
+<text x="0" y="178" font-size="58" font-weight="800" class="t" letter-spacing="-1.5">Agent<tspan fill="url(#brand)">State</tspan>Storage</text>
+<text x="0" y="226" font-size="27" font-weight="600" class="t">The open session layer for AI agents</text>
+<text x="0" y="266" font-size="18" class="s">Snapshot, fork, resume and erase an agent session —</text>
+<text x="0" y="292" font-size="18" class="s">its KV, workspace and memory, together.</text>
+<text x="0" y="318" font-size="18" class="s">On your infrastructure. Any engine. Any cloud.</text>
+<g transform="translate(0,350)"><rect width="106" height="34" rx="17.0" fill="#22D3EE" fill-opacity=".12" stroke="#22D3EE" stroke-opacity=".55"/><circle cx="16" cy="17.0" r="4.5" fill="#22D3EE"/><text x="28" y="22.2" font-size="15" class="t m">snapshot</text></g>
+<g transform="translate(118.0,350)"><rect width="70" height="34" rx="17.0" fill="#A78BFA" fill-opacity=".12" stroke="#A78BFA" stroke-opacity=".55"/><circle cx="16" cy="17.0" r="4.5" fill="#A78BFA"/><text x="28" y="22.2" font-size="15" class="t m">fork</text></g>
+<g transform="translate(200.0,350)"><rect width="88" height="34" rx="17.0" fill="#34D399" fill-opacity=".12" stroke="#34D399" stroke-opacity=".55"/><circle cx="16" cy="17.0" r="4.5" fill="#34D399"/><text x="28" y="22.2" font-size="15" class="t m">resume</text></g>
+<g transform="translate(300.0,350)"><rect width="79" height="34" rx="17.0" fill="#F87171" fill-opacity=".12" stroke="#F87171" stroke-opacity=".55"/><circle cx="16" cy="17.0" r="4.5" fill="#F87171"/><text x="28" y="22.2" font-size="15" class="t m">erase</text></g>
+</g>
+<g><path d="M836 220C855.0 220 855.0 220 874 220" fill="none" stroke="#2A3D66" stroke-width="2"/><path d="M836 220C855.0 220 855.0 220 874 220" fill="none" stroke="#22D3EE" stroke-width="2" class="flow"/></g>
+<g><path d="M946 220C970.0 220 970.0 128 994 128" fill="none" stroke="#2A3D66" stroke-width="2"/><path d="M946 220C970.0 220 970.0 128 994 128" fill="none" stroke="#A78BFA" stroke-width="2" class="flow"/></g>
+<g><path d="M946 220C970.0 220 970.0 220 994 220" fill="none" stroke="#2A3D66" stroke-width="2"/><path d="M946 220C970.0 220 970.0 220 994 220" fill="none" stroke="#A78BFA" stroke-width="2" class="flow"/></g>
+<g><path d="M946 220C970.0 220 970.0 312 994 312" fill="none" stroke="#2A3D66" stroke-width="2"/><path d="M946 220C970.0 220 970.0 312 994 312" fill="none" stroke="#A78BFA" stroke-width="2" class="flow"/></g>
+<g><path d="M1066 128C1090.0 128 1090.0 84 1114 84" fill="none" stroke="#2A3D66" stroke-width="2"/><path d="M1066 128C1090.0 128 1090.0 84 1114 84" fill="none" stroke="#FBBF24" stroke-width="2" class="flow"/></g>
+<g><path d="M1066 128C1090.0 128 1090.0 168 1114 168" fill="none" stroke="#2A3D66" stroke-width="2"/><path d="M1066 128C1090.0 128 1090.0 168 1114 168" fill="none" stroke="#FBBF24" stroke-width="2" class="flow"/></g>
+<g><path d="M1066 312C1090.0 312 1090.0 268 1114 268" fill="none" stroke="#2A3D66" stroke-width="2"/><path d="M1066 312C1090.0 312 1090.0 268 1114 268" fill="none" stroke="#34D399" stroke-width="2" class="flow"/></g>
+<g><path d="M1066 312C1090.0 312 1090.0 356 1114 356" fill="none" stroke="#2A3D66" stroke-width="2"/><path d="M1066 312C1090.0 312 1090.0 356 1114 356" fill="none" stroke="#34D399" stroke-width="2" class="flow"/></g>
+<g transform="translate(800,220)"><rect x="-36" y="-17" width="72" height="34" rx="17" fill="#0E1830" stroke="#2A3D66" stroke-width="1.5"/><circle cx="-17" cy="0" r="5.5" fill="#22D3EE"/><circle cx="0" cy="0" r="5.5" fill="#A78BFA"/><circle cx="17" cy="0" r="5.5" fill="#FBBF24"/></g>
+<g transform="translate(910,220)"><circle r="30" fill="#A78BFA" opacity="0.55" filter="url(#glow)" class="pulse"/><rect x="-36" y="-17" width="72" height="34" rx="17" fill="#0E1830" stroke="#2A3D66" stroke-width="1.5"/><circle cx="-17" cy="0" r="5.5" fill="#22D3EE"/><circle cx="0" cy="0" r="5.5" fill="#A78BFA"/><circle cx="17" cy="0" r="5.5" fill="#FBBF24"/></g>
+<g transform="translate(1030,128)"><rect x="-36" y="-17" width="72" height="34" rx="17" fill="#0E1830" stroke="#2A3D66" stroke-width="1.5"/><circle cx="-17" cy="0" r="5.5" fill="#22D3EE"/><circle cx="0" cy="0" r="5.5" fill="#A78BFA"/><circle cx="17" cy="0" r="5.5" fill="#FBBF24"/></g>
+<g transform="translate(1030,220)"><rect x="-36" y="-17" width="72" height="34" rx="17" fill="#0E1830" stroke="#2A3D66" stroke-width="1.5"/><circle cx="-17" cy="0" r="5.5" fill="#22D3EE"/><circle cx="0" cy="0" r="5.5" fill="#A78BFA"/><circle cx="17" cy="0" r="5.5" fill="#FBBF24"/></g>
+<g transform="translate(1030,312)"><rect x="-36" y="-17" width="72" height="34" rx="17" fill="#0E1830" stroke="#2A3D66" stroke-width="1.5"/><circle cx="-17" cy="0" r="5.5" fill="#22D3EE"/><circle cx="0" cy="0" r="5.5" fill="#A78BFA"/><circle cx="17" cy="0" r="5.5" fill="#FBBF24"/></g>
+<g transform="translate(1150,84)"><circle r="30" fill="#FBBF24" opacity="0.55" filter="url(#glow)" class="pulse"/><rect x="-36" y="-17" width="72" height="34" rx="17" fill="#0E1830" stroke="#2A3D66" stroke-width="1.5"/><circle cx="-17" cy="0" r="5.5" fill="#22D3EE"/><circle cx="0" cy="0" r="5.5" fill="#A78BFA"/><circle cx="17" cy="0" r="5.5" fill="#FBBF24"/></g>
+<g transform="translate(1150,168)"><rect x="-36" y="-17" width="72" height="34" rx="17" fill="#0E1830" stroke="#2A3D66" stroke-width="1.5"/><circle cx="-17" cy="0" r="5.5" fill="#22D3EE"/><circle cx="0" cy="0" r="5.5" fill="#A78BFA"/><circle cx="17" cy="0" r="5.5" fill="#FBBF24"/></g>
+<g transform="translate(1150,268)"><circle r="30" fill="#34D399" opacity="0.55" filter="url(#glow)" class="pulse"/><rect x="-36" y="-17" width="72" height="34" rx="17" fill="#0E1830" stroke="#2A3D66" stroke-width="1.5"/><circle cx="-17" cy="0" r="5.5" fill="#22D3EE"/><circle cx="0" cy="0" r="5.5" fill="#A78BFA"/><circle cx="17" cy="0" r="5.5" fill="#FBBF24"/></g>
+<g transform="translate(1150,356)"><rect x="-36" y="-17" width="72" height="34" rx="17" fill="#0E1830" stroke="#2A3D66" stroke-width="1.5"/><circle cx="-17" cy="0" r="5.5" fill="#22D3EE"/><circle cx="0" cy="0" r="5.5" fill="#A78BFA"/><circle cx="17" cy="0" r="5.5" fill="#FBBF24"/></g>
+<text x="910" y="188" text-anchor="middle" font-size="12" class="d m">fork ×3</text>
+<text x="800" y="262" text-anchor="middle" font-size="12" class="d m">s0</text>
+<circle cx="836" cy="410" r="5" fill="#22D3EE"/><text x="847" y="415" font-size="14" class="s">KV</text>
+<circle cx="893.0" cy="410" r="5" fill="#A78BFA"/><text x="904.0" y="415" font-size="14" class="s">workspace</text>
+<circle cx="1009.5" cy="410" r="5" fill="#FBBF24"/><text x="1020.5" y="415" font-size="14" class="s">memory</text>
+</svg>

@@ -61,8 +61,9 @@ jobs:
         run: cmake --build build-uring -j --target test_nvme_tier
 
       - name: ctest (io_uring nvme_tier only)
-        run: ctest --test-dir build-uring --output-on-failure --timeout 60 \
-                   -R '^NvmeTier'
+        run: |
+          ctest --test-dir build-uring --output-on-failure --timeout 60 \
+                -R '^NvmeTier'
 
       # Phase B10 — RocksDB opt-in build. Ubuntu's librocksdb-dev often
       # ships no CMake config, so the top-level find_package falls back
@@ -81,8 +82,9 @@ jobs:
         run: cmake --build build-rocksdb -j --target test_rocksdb_store
 
       - name: ctest (rocksdb store only)
-        run: ctest --test-dir build-rocksdb --output-on-failure --timeout 120 \
-                   -R 'Rocksdb|SealedChunk|TenantQuota'
+        run: |
+          ctest --test-dir build-rocksdb --output-on-failure --timeout 120 \
+                -R 'Rocksdb|SealedChunk|TenantQuota'
 
   # ---------------------------------------------------------------------------
   # Go control-plane — fast unit tests (excluded: integration tag)

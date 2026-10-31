@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 620" width="1280" height="620" role="img" aria-label="Session tree: snapshot, fork, resume after a crash, and cascading erase">
+<style>
+  .t  { font-family: Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; fill: #0A1324; }
+  .s  { font-family: Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; fill: #46597A; }
+  .d  { font-family: Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; fill: #8393AE; }
+  .m  { font-family: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace; }
+  .flow  { stroke-dasharray: 5 9; animation: flow 1.6s linear infinite; }
+  .pulse { animation: pulse 2.8s ease-in-out infinite; }
+  @keyframes flow  { to { stroke-dashoffset: -28; } }
+  @keyframes pulse { 0%,100% { opacity: .25; } 50% { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) {
+    .flow, .pulse { animation: none; }
+  }
+</style>
+<defs>
+  <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#EDF3FC"/>
+  </linearGradient>
+  <linearGradient id="brand" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0" stop-color="#0891B2"/><stop offset=".5" stop-color="#7C3AED"/>
+    <stop offset="1" stop-color="#D97706"/>
+  </linearGradient>
+  <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+    <path d="M32 0H0V32" fill="none" stroke="#D3DEEE" stroke-width="1" opacity=".55"/>
+  </pattern>
+  <radialGradient id="aura" cx=".5" cy=".5" r=".5">
+    <stop offset="0" stop-color="#7C3AED" stop-opacity="0.12"/>
+    <stop offset=".55" stop-color="#0891B2" stop-opacity="0.04"/>
+    <stop offset="1" stop-color="#0891B2" stop-opacity="0"/>
+  </radialGradient>
+  <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+    <feGaussianBlur stdDeviation="7"/>
+  </filter>
+</defs>
+<rect width="1280" height="620" rx="18" fill="url(#bg)"/>
+<rect width="1280" height="620" rx="18" fill="url(#grid)"/>
+<text x="48" y="58" font-size="24" font-weight="700" class="t">One session tree. Every kind of state.</text>
+<text x="48" y="86" font-size="16" class="s">Each snapshot captures the KV prefix, the workspace and the memory version under one lineage id.</text>
+<g><path d="M176 210C220.0 210 220.0 210 264 210" fill="none" stroke="#C3D0E4" stroke-width="2"/><path d="M176 210C220.0 210 220.0 210 264 210" fill="none" stroke="#0891B2" stroke-width="2" class="flow"/></g>
+<g><path d="M336 210C380.0 210 380.0 210 424 210" fill="none" stroke="#C3D0E4" stroke-width="2"/><path d="M336 210C380.0 210 380.0 210 424 210" fill="none" stroke="#0891B2" stroke-width="2" class="flow"/></g>
+<g><path d="M496 210C540.0 210 540.0 210 584 210" fill="none" stroke="#C3D0E4" stroke-width="2"/><path d="M496 210C540.0 210 540.0 210 584 210" fill="none" stroke="#DC2626" stroke-width="2" class="flow"/></g>
+<g transform="translate(620,210)"><rect x="-36" y="-17" width="72" height="34" rx="17" fill="#FFFFFF" stroke="#DC2626" stroke-width="1.5"/><circle cx="-17" cy="0" r="5.5" fill="#94A3B8"/><circle cx="0" cy="0" r="5.5" fill="#94A3B8"/><circle cx="17" cy="0" r="5.5" fill="#94A3B8"/><path d="M-9-9L9 9M9-9L-9 9" stroke="#DC2626" stroke-width="3" stroke-linecap="round"/></g>
+<text x="620" y="180" text-anchor="middle" font-size="13" class="m" fill="#DC2626">crash</text>
+<path d="M460 190C500 100 740 100 780 190" fill="none" stroke="#059669" stroke-width="2.2" class="flow"/>
+<text x="620" y="112" text-anchor="middle" font-size="13" class="m" fill="#059669">resume from s2 — no tool call replayed</text>
+<g><path d="M816 210C860.0 210 860.0 210 904 210" fill="none" stroke="#C3D0E4" stroke-width="2"/><path d="M816 210C860.0 210 860.0 210 904 210" fill="none" stroke="#0891B2" stroke-width="2" class="flow"/></g>
+<g transform="translate(140,210)"><rect x="-36" y="-17" width="72" height="34" rx="17" fill="#FFFFFF" stroke="#C3D0E4" stroke-width="1.5"/><circle cx="-17" cy="0" r="5.5" fill="#0891B2"/><circle cx="0" cy="0" r="5.5" fill="#7C3AED"/><circle cx="17" cy="0" r="5.5" fill="#D97706"/></g>
+<text x="140" y="248" text-anchor="middle" font-size="12" class="d m">s0</text>
+<g transform="translate(300,210)"><rect x="-36" y="-17" width="72" height="34" rx="17" fill="#FFFFFF" stroke="#C3D0E4" stroke-width="1.5"/><circle cx="-17" cy="0" r="5.5" fill="#0891B2"/><circle cx="0" cy="0" r="5.5" fill="#7C3AED"/><circle cx="17" cy="0" r="5.5" fill="#D97706"/></g>
+<text x="300" y="248" text-anchor="middle" font-size="12" class="d m">s1</text>
+<g transform="translate(460,210)"><rect x="-36" y="-17" width="72" height="34" rx="17" fill="#FFFFFF" stroke="#C3D0E4" stroke-width="1.5"/><circle cx="-17" cy="0" r="5.5" fill="#0891B2"/><circle cx="0" cy="0" r="5.5" fill="#7C3AED"/><circle cx="17" cy="0" r="5.5" fill="#D97706"/></g>
+<text x="430" y="248" text-anchor="middle" font-size="12" class="d m">s2</text>
+<g transform="translate(780,210)"><circle r="30" fill="#059669" opacity="0.22" filter="url(#glow)" class="pulse"/><rect x="-36" y="-17" width="72" height="34" rx="17" fill="#FFFFFF" stroke="#C3D0E4" stroke-width="1.5"/><circle cx="-17" cy="0" r="5.5" fill="#0891B2"/><circle cx="0" cy="0" r="5.5" fill="#7C3AED"/><circle cx="17" cy="0" r="5.5" fill="#D97706"/></g>
+<text x="780" y="248" text-anchor="middle" font-size="12" class="d m">s3′</text>
+<g transform="translate(940,210)"><rect x="-36" y="-17" width="72" height="34" rx="17" fill="#FFFFFF" stroke="#C3D0E4" stroke-width="1.5"/><circle cx="-17" cy="0" r="5.5" fill="#0891B2"/><circle cx="0" cy="0" r="5.5" fill="#7C3AED"/><circle cx="17" cy="0" r="5.5" fill="#D97706"/></g>
+<text x="940" y="248" text-anchor="middle" font-size="12" class="d m">s4</text>
+<path d="M480 226C500 300 550 300 604 300" fill="none" stroke="#C3D0E4" stroke-width="2"/>
+<path d="M480 226C500 300 550 300 604 300" fill="none" stroke="#7C3AED" stroke-width="2" class="flow"/>
+<g transform="translate(640,300)"><rect x="-36" y="-17" width="72" height="34" rx="17" fill="#FFFFFF" stroke="#C3D0E4" stroke-width="1.5"/><circle cx="-17" cy="0" r="5.5" fill="#0891B2"/><circle cx="0" cy="0" r="5.5" fill="#7C3AED"/><circle cx="17" cy="0" r="5.5" fill="#D97706"/></g>
+<text x="688" y="304" font-size="12" class="d m">f1</text>
+<path d="M480 226C500 356 550 356 604 356" fill="none" stroke="#C3D0E4" stroke-width="2"/>
+<path d="M480 226C500 356 550 356 604 356" fill="none" stroke="#7C3AED" stroke-width="2" class="flow"/>
+<g transform="translate(640,356)"><circle r="30" fill="#7C3AED" opacity="0.22" filter="url(#glow)" class="pulse"/><rect x="-36" y="-17" width="72" height="34" rx="17" fill="#FFFFFF" stroke="#C3D0E4" stroke-width="1.5"/><circle cx="-17" cy="0" r="5.5" fill="#0891B2"/><circle cx="0" cy="0" r="5.5" fill="#7C3AED"/><circle cx="17" cy="0" r="5.5" fill="#D97706"/></g>
+<text x="688" y="360" font-size="12" class="d m">f2</text>
+<path d="M480 226C500 412 550 412 604 412" fill="none" stroke="#C3D0E4" stroke-width="2"/>
+<path d="M480 226C500 412 550 412 604 412" fill="none" stroke="#7C3AED" stroke-width="2" class="flow"/>
+<g transform="translate(640,412)"><rect x="-36" y="-17" width="72" height="34" rx="17" fill="#FFFFFF" stroke="#C3D0E4" stroke-width="1.5"/><circle cx="-17" cy="0" r="5.5" fill="#0891B2"/><circle cx="0" cy="0" r="5.5" fill="#7C3AED"/><circle cx="17" cy="0" r="5.5" fill="#D97706"/></g>
+<text x="688" y="416" font-size="12" class="d m">f3</text>
+<text x="730" y="352" font-size="14" class="s">fork in O(1), copy-on-write:</text>
+<text x="730" y="374" font-size="14" class="s">sub-agents · tree search · what-if</text>
+<rect x="48" y="470" width="1184" height="112" rx="16" fill="#F5F8FD" stroke="#C3D0E4"/>
+<text x="72" y="500" font-size="13" letter-spacing="1.5" class="d m">COMPLIANCE, BUILT IN</text>
+<g transform="translate(72,522)"><rect width="219" height="34" rx="17.0" fill="#DC2626" fill-opacity=".12" stroke="#DC2626" stroke-opacity=".55"/><circle cx="16" cy="17.0" r="4.5" fill="#DC2626"/><text x="28" y="21.9" font-size="14" class="t m">erase(subject=user-42)</text></g>
+<path d="M294.79999999999995 539h10" stroke="#DC2626" stroke-width="2" class="flow"/>
+<g transform="translate(308.79999999999995,522)"><rect width="104" height="34" rx="17.0" fill="#DC2626" fill-opacity=".12" stroke="#DC2626" stroke-opacity=".55"/><circle cx="16" cy="17.0" r="4.5" fill="#DC2626"/><text x="28" y="21.6" font-size="13" class="t m">memory v7</text></g><path d="M334.79999999999995 539h64" stroke="#DC2626" stroke-width="1.6" opacity=".8"/>
+<path d="M420.99999999999994 539h10" stroke="#DC2626" stroke-width="2" class="flow"/>
+<g transform="translate(434.99999999999994,522)"><rect width="135" height="34" rx="17.0" fill="#DC2626" fill-opacity=".12" stroke="#DC2626" stroke-opacity=".55"/><circle cx="16" cy="17.0" r="4.5" fill="#DC2626"/><text x="28" y="21.6" font-size="13" class="t m">12 embeddings</text></g><path d="M460.99999999999994 539h95" stroke="#DC2626" stroke-width="1.6" opacity=".8"/>
+<path d="M578.3999999999999 539h10" stroke="#DC2626" stroke-width="2" class="flow"/>
+<g transform="translate(592.3999999999999,522)"><rect width="151" height="34" rx="17.0" fill="#DC2626" fill-opacity=".12" stroke="#DC2626" stroke-opacity=".55"/><circle cx="16" cy="17.0" r="4.5" fill="#DC2626"/><text x="28" y="21.6" font-size="13" class="t m">KV prefix 3f9a…</text></g><path d="M618.3999999999999 539h111" stroke="#DC2626" stroke-width="1.6" opacity=".8"/>
+<path d="M751.3999999999999 539h10" stroke="#DC2626" stroke-width="2" class="flow"/>
+<g transform="translate(765.3999999999999,522)"><rect width="135" height="34" rx="17.0" fill="#DC2626" fill-opacity=".12" stroke="#DC2626" stroke-opacity=".55"/><circle cx="16" cy="17.0" r="4.5" fill="#DC2626"/><text x="28" y="21.6" font-size="13" class="t m">refs in s1–s4</text></g><path d="M791.3999999999999 539h95" stroke="#DC2626" stroke-width="1.6" opacity=".8"/>
+<g transform="translate(922.7999999999998,522)"><rect width="104" height="34" rx="17.0" fill="#059669" fill-opacity=".12" stroke="#059669" stroke-opacity=".55"/><circle cx="16" cy="17.0" r="4.5" fill="#059669"/><text x="28" y="21.6" font-size="13" class="t m">receipt ✓</text></g>
+<g transform="translate(1062,492)"><rect x="0" y="6" width="14" height="11" rx="2" fill="#D97706"/><path d="M3 6V3a4 4 0 0 1 8 0v3" fill="none" stroke="#D97706" stroke-width="2"/><text x="22" y="16" font-size="13" class="s">legal hold keeps the audit log</text></g>
+</svg>

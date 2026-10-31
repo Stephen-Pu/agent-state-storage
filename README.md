@@ -1,259 +1,174 @@
-# The open data plane for AI state
-
-> **AgentStateStorage** — the unified agent state plane.
->
-> An AI agent doesn't just answer — it **remembers you across sessions**, **works inside a sandbox**,
-> **calls tools that change the world**, and must **resume a half-finished task after a crash** without
-> redoing them. Beneath every step sit the **KV and checkpoints** that make it affordable to run at all.
->
-> All of that is **state** — the context an agent reasons over, the workspace it acts in, the memory it
-> carries, the execution it can't afford to replay. Short-lived or irreplaceable, latency-critical, with
-> no cold tier to fall back on. We treat it as what it is: a **distributed memoization layer** for the
-> state agents run on — identity-addressed, economically self-aware, multi-tenant, vendor-neutral.
->
-> **The recompute plane ships today. The memory plane is the frontier no one owns.**
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero-dark.svg">
+  <img alt="AgentStateStorage: the open session layer for AI agents. Snapshot, fork, resume and erase an agent session: its KV, workspace and memory, together." src="docs/assets/hero-light.svg" width="100%">
+</picture>
 
 [![CI](https://github.com/Stephen-Pu/agent-state-storage/actions/workflows/ci.yml/badge.svg)](https://github.com/Stephen-Pu/agent-state-storage/actions)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)](https://en.cppreference.com/w/cpp/20)
-[![Go 1.22](https://img.shields.io/badge/Go-1.22+-blue.svg)](https://go.dev/)
-[![A-plane](https://img.shields.io/badge/recompute%20plane-shipped-brightgreen)]()
-[![B-plane](https://img.shields.io/badge/memory%20plane-in%20design-orange)]()
+[![KV state layer](https://img.shields.io/badge/KV%20state%20layer-shipped-brightgreen)](#what-works-today)
+[![Session layer](https://img.shields.io/badge/session%20layer-building-orange)](#roadmap)
 
-**Working on disaggregated inference, KV-cache offloading, prefix caching, agent memory, or durable execution?** This is the open, vendor-neutral state layer that sits *underneath* all of them — for inference-platform, agent-infra, and multi-cloud / neocloud teams that refuse to be locked to one cloud or one vendor's silicon.
+**An agent session is more than a chat log.** It is the model's KV cache, the sandbox it works in, the memory it carries and the steps it has already taken. Agent teams need to **fork** that session for sub-agents and tree search, **resume** it after a crash without replaying tool calls, and **erase** a user from it when the law says so.
+
+Every major platform now does a piece of this, inside its own walls. **AgentStateStorage is the open, self-hosted version**: one session tree for every kind of agent state, with compliance built in, on your infrastructure, under any inference engine and any cloud.
+
+> **Status, honestly.** The KV state layer underneath (identity addressing, tiering, the keep-or-recompute brain, hard multi-tenancy) is **built and tested**. The session layer on top (session tree, erase · hold · audit, SDKs and integrations) is **what we are building now**. The [capability matrix](#capability-matrix) is the contract.
 
 ---
 
-**Most "AI state" infrastructure is a fraction of what a state layer should be. Here is the whole thing:**
+## Why a session layer
 
-```mermaid
-flowchart TB
-    T["a unit of AI state arrives<br/>KV block · checkpoint · sandbox · agent memory"]
-    T --> ID["1 — Identity / lineage addressing<br/>keyed by what produced it, not by a path"]
-    ID --> BRAIN{"2 — Economic brain<br/>store, or recompute?"}
-    BRAIN -->|cheaper to keep| TIER["3 — Latency tiering<br/>HBM → DRAM → CXL → NVMe → cold · there is no cold state"]
-    BRAIN -->|cheaper to redo| RC["recompute — the layer steps aside"]
-    TIER --> FORK["4 — O&#40;1&#41; fork / branch<br/>copy-on-write, for exploration & speculation"]
-    FORK --> EVICT["5 — Cost-based eviction<br/>drop what is cheapest to rebuild, not LRU"]
-    EVICT --> ZC["6 — Zero-copy across nodes<br/>state migrates to compute, or compute routes to state"]
-    ZC --> WRAP["wrapped in HARD multi-tenancy + vendor-neutrality<br/>what enterprises need · what no state store offers"]
-    WRAP --> V["= a distributed memoization layer for AI state"]
-    style BRAIN fill:#fff3e0,stroke:#f57c00,stroke-width:2px
-    style V fill:#e6f7ea,stroke:#2e9e50,stroke-width:3px
-    style RC fill:#f5f5f5,stroke:#999,color:#666
-    style WRAP fill:#eef4ff,stroke:#2e5aac
+| You are building… | You need to… | Today |
+|---|---|---|
+| Coding agents, deep research, multi-agent systems | **fork** a session into parallel sub-agents or search branches, cheaply | Each platform forks only its own piece: the engine its KV, the sandbox vendor its filesystem, the memory store its records |
+| Long-running agents | **resume** after a crash or deploy, without re-running tool calls that already sent the email or charged the card | Durable-execution engines and agent platforms each keep their own snapshot format; none travels between them |
+| Anything with real users in the EU, healthcare or finance | **erase** a user and everything derived from them (summaries, embeddings, cached KV), while **keeping** the audit log the law requires | Erasure stops at the store you call; derived state is left behind. The EU AI Act's logging duty (Art. 12) applies from 2026-08-02, alongside GDPR erasure |
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/session-tree-dark.svg">
+  <img alt="Session tree: snapshots s0 to s4, a crash at s3 resumed from s2, three forks from s2, and an erase that cascades to memory, embeddings, KV prefix and snapshot references, producing a receipt while a legal hold keeps the audit log." src="docs/assets/session-tree-light.svg" width="100%">
+</picture>
+
+### The four verbs
+
+> **Planned API (M1–M2), not implemented yet.** Shown so you can tell us if it fits your agent.
+
+```python
+from agent_state_storage import Client            # gRPC client, Python first, TypeScript next
+
+ss = Client("grpc://state.internal:7000", tenant="acme")
+
+s2 = ss.snapshot(session="sess-123")              # KV prefix + workspace + memory, one lineage id
+kids = [ss.fork(s2) for _ in range(3)]            # O(1), copy-on-write
+ss.resume(s2)                                     # after a crash: no tool call replayed
+receipt = ss.erase(subject="user-42")             # cascades along lineage; legal holds respected
 ```
 
-<sub>Six primitives on one spine, plus the two things enterprises can't live without. **No shipping product implements all of them** — the gap analysis is below. We built the spine, economic brain included, and shipped the hardest plane first.</sub>
+First integrations: **OpenAI Agents SDK** (sessions and sandbox workspace snapshots) and **LangGraph** (checkpointer and store), then an **MCP server** that hands out session handles, as the MCP 2026-07-28 spec expects for cross-call state.
 
 ---
 
-## The bottleneck moved. From data to state.
+## Where it sits
 
-For a decade, infrastructure optimized **data at rest** — store it cheap, keep it forever, tier it cold.
-Then **agents arrived** — software that acts, remembers, forks sandboxes, and runs for hours — and a
-different kind of data took over: **state in motion.**
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/architecture-dark.svg">
+  <img alt="Architecture layers: your agents; SDK and gRPC API; session layer (session tree, erase hold audit, keep-or-recompute brain); state (KV prefix, durable ingest, agent memory, execution state); spine (identity and lineage, DRAM to NVMe to object tiering, hard multi-tenancy and mTLS, cross-node data path); engines and storage. Each part is marked shipped, next or later." src="docs/assets/architecture-light.svg" width="100%">
+</picture>
 
-And that state is unforgiving. A **stale checkpoint** restored a second late idles a GPU cluster. A
-**missing KV block** reruns a 100K-token prefill and burns the FLOPs twice. A **crashed agent** that
-can't reload its execution state re-runs tool calls that already charged a card or sent an email. A
-**lost long-term memory** is gone for good — there is no recomputing what a user told you last week.
+Underneath the session layer is one **spine** that every kind of state shares:
 
-The industry is scrambling to name this moment — *"State Lake," "context storage," "KV-centric infra."*
-But **every incumbent answer is closed:** welded to one hyperscaler's cloud, or one vendor's silicon.
+1. **Identity and lineage addressing**: state is keyed by what produced it, so the system can answer "have I computed this before?" and "what was derived from this user?"
+2. **A keep-or-recompute brain**: for state that can be recomputed (KV, embeddings, tool results), keep it only when keeping is cheaper than recomputing.
+3. **Latency tiering**: DRAM → NVMe → object storage, with object storage (or an Alluxio multi-cloud UFS) as the durable floor.
+4. **Copy-on-write fork**, which the session tree builds on.
+5. **Hard multi-tenancy**: tenant identity from mTLS certificates, per-tenant quotas and priorities, no cross-tenant prefix probing.
 
-> **There is no open, neutral, economically-governed data plane for AI state.**
-> That is the gap. That is what we are building.
-
----
-
-## What "state" actually is
-
-Strip away the marketing and KV caches, checkpoints, sandbox snapshots and agent memory share **one shape**:
-
-- their value is **the recomputation they avoid** — or, when they can't be recomputed, the fact that they're **irreplaceable**;
-- they are **addressed by identity** — *what produced them* — not by a file path;
-- they live on a **latency continuum** from GPU memory to cold object storage, with **no meaningful cold tier**.
-
-So we don't model state as a filesystem or an object store. We model it as what it is:
-
-> ### State storage is **distributed memoization** —
-> an identity-addressed, economically-governed cache of computation.
-> *Checkpoint = memoized training. KV = memoized prefill. Sandbox = memoized environment. Memory = memoized experience.*
-
-Those six primitives at the top aren't a wish-list. Each is genuinely hard — which is precisely why every
-real implementation is *partial*:
-
-| # | A real state layer must… | Why it's hard |
-| :- | :--- | :--- |
-| 1 | **Address by identity / lineage** — key state by *what produced it* | so it can answer *"have I computed this before?"* — the precondition for reuse |
-| 2 | **Decide store-vs-recompute at runtime** — the *economic brain* | most systems blindly store or blindly recompute; the right call is per-block |
-| 3 | **Tier by latency-to-compute**, HBM→DRAM→CXL→NVMe→cold | not temperature tiering — there is no "cold" state |
-| 4 | **Fork / branch in O(1)** (copy-on-write) | agent exploration, speculative decode, param sweeps all need cheap divergence |
-| 5 | **Evict by recompute cost, not recency** | LRU throws away the block that was most expensive to make |
-| 6 | **Address across nodes, zero-copy** | state migrates to compute, or compute routes to state |
-
-Plus the two things enterprises can't live without and no state store offers: **hard multi-tenancy** and **vendor-neutrality.**
+State splits into two planes by one question, *can it be recomputed?* **Recomputable** state (KV, embeddings, tool results) is a cache governed by cost. **Irreplaceable** state (memory, execution history) is governed by durability and compliance. One session tree spans both.
 
 ---
 
-## Two planes, one spine
+## Capability matrix
 
-Not all state is equal. The single sharpest cut is **can it be recomputed?**
+As of 2026-10. ✅ built and tested · 🟡 partial · 🚧 next (M1–M2) · ⏳ later.
 
-```mermaid
-graph TB
-    subgraph S["One spine — identity addressing · value policy · latency tiering · multi-tenancy · zero-copy"]
-      direction LR
-      A["<b>A-plane · recompute-avoidance</b><br/>value = compute saved · governed by store-vs-recompute<br/>KV cache · sandbox snapshots · embeddings · tool-results<br/><b>SHIPPED ✅</b>"]
-      B["<b>B-plane · irreplaceable memory</b><br/>value = you literally cannot recompute it · governed by durability<br/>agent long-term memory · durable execution state<br/><b>IN DESIGN 🚧</b>"]
-    end
-    S --> C["Cold / durable floor · Alluxio multi-cloud UFS — S3 · OSS · GCS · Azure Blob"]
-    style A fill:#e6f7ea,stroke:#2e9e50,stroke-width:2px
-    style B fill:#fff3e0,stroke:#f57c00,stroke-width:2px
-```
+| Capability | Status | Notes |
+|---|:---:|---|
+| KV state: identity addressing, DRAM/NVMe/object tiers, keep-or-recompute brain, per-tenant quotas | ✅ | Single node |
+| KV state across nodes (zero-copy data path, RDMA backends) | ⏳ | Interfaces in place; in-process today |
+| Durable ingest for irreplaceable state (WAL, crash recovery) | 🟡 | Single node; survives a process restart, not a node loss |
+| Session tree: snapshot, fork, resume, diff | 🚧 | M2; conversation, memory and workspace first, KV prefix after the cross-node path |
+| Erase · hold · audit | 🚧 | M2 |
+| Python SDK + gRPC API | 🚧 | M1 |
+| OpenAI Agents SDK, LangGraph integrations | 🚧 | M1 |
+| MCP server | ⏳ | M3 |
+| TypeScript SDK | ⏳ | After M1 |
+| Agent memory (versioned, immutable; consolidation writes a new version) | 🚧 | M2 |
+| Execution state, embeddings, tool-result caching | ⏳ | |
 
-Here is the uncomfortable truth the market misses: **it over-indexes on the A-plane cache — the part
-that is *optional* — and under-serves the B-plane memory that genuinely *cannot be lost.*** Everyone is
-racing to cache KV. Almost no one is building the open, governed layer for the agent memory and
-execution state that has no recompute fallback at all.
+## Works with your inference engine
 
-The energy is *starting* to show — **Mem0 · Zep · Letta** for memory, **Temporal · DBOS** for durable
-execution — but each is app-level, single-tenant, or framework-locked. **None is an open, multi-tenant
-state layer.** That gap is the B-plane.
+| Engine | How it connects | Status |
+|---|---|---|
+| **vLLM** | Native KV connector (`KVConnectorBase_V1`); a tier behind vLLM's built-in offloading (`SecondaryTierManager`) is next | ✅ connector · 🚧 offload tier |
+| **SGLang** | HiCache storage backend | 🚧 |
+| **NVIDIA Dynamo** | Through the engine's native offloading (Dynamo v1.5 deprecated KVBM in favour of it) | 🚧 |
+| **TensorRT-LLM** | Through LMCache | ⏳ |
+| **llm-d · AIBrix · Ray Serve LLM** | Through the vLLM path | ⏳ to verify |
+| **LMDeploy** | No external KV storage interface yet | ⏸ |
+| **Hugging Face TGI** | Archived upstream (2026-03); migrate to vLLM or SGLang | ❌ |
+| **DeepSpeed-MII** | No external KV storage interface | ❌ |
+| **Any language** | C ABI (`lookup / reserve / publish / fetch / seal / release`) | ✅ |
 
-We build **both**, on **one spine**, and we're **honest about which is shipped.**
-
----
-
-## Why the incumbents don't close this gap
-
-The strongest players have each built **one instance, mechanism-only, and locked.**
-
-| | What it is | What it's missing |
-| :-- | :-- | :-- |
-| **NVIDIA Dynamo / KVBM** | The most complete engine — identity addressing, 4-tier, zero-copy | **No economic brain** (store-vs-recompute is outsourced to an external scheduler); **KV-instance only**; **NVIDIA-locked** |
-| **Mooncake / LMCache** | Excellent distributed KV pools | KV only · single-cloud · single-tenant · no economic brain |
-| **火山 "State Lake" / hyperscaler** | A broad narrative over existing block/file/object products | No unifying abstraction; **cloud-locked**; the umbrella has no spine |
-| **WEKA Augmented Memory Grid / VAST** (2026) | PB-scale persistent KV cache as a storage tier | KV-only · appliance/fabric-tied · no economic brain · no memory or execution plane |
-| **NVIDIA CMX** (GTC 2026) | Vertically-integrated KV/context storage (BlueField-4 + Spectrum-X) | Full NVIDIA-stack lock · KV-only · no open multi-tenant governance |
-
-The pattern is clear — and the 2026 storage-hardware wave (WEKA, CMX) only sharpens it: **mechanism exists, in silos; the unifying, economically-governed, open, multi-tenant
-spine does not.** The strongest player (KVBM) proves the point — it deliberately leaves the *economic decision*
-to someone else, covers exactly *one* of the state instances, and runs *only* on NVIDIA.
-
-**We built the spine, with the economic brain in it, open, on the plane that matters most first.**
-
----
-
-## The proof: we shipped the hardest instance first
-
-We didn't lead with a manifesto. We took the most expensive, most latency-sensitive A-plane instance —
-**KV cache** — and shipped it end-to-end, economic brain included.
-
-```
-       17.5× faster.     94% cheaper.     $8M saved per cluster per year.
-```
-
-**One 100K-token RAG query, traced end-to-end:**
-
-|                              |   Cold start |   With kvcache |          Δ |
-| :--------------------------- | -----------: | -------------: | ---------: |
-| End-to-end latency           |     **525 s** |        **30 s** | **17.5×** |
-| Cost per query               |        $1.17 |          $0.07 |  **−94%** |
-| Annual cost / cluster        |       **$8.5 M** |     **$487 K** | **−$8 M** |
-
-<sub>Llama-3.1-70B · 8× H100 TP · 100K prompt, 90K shared prefix · 95% steady-state hit rate · $4/h H100.
-Traced projection; assumptions & math in HLD §1.3 / v2.0 §13.7. High-prefix-sharing workloads
-(compliance / legal / support: 80–95%). This is the A-plane, running today.</sub>
-
-The five things that make it work are exactly primitives 1–6 above, made real:
-**identity-addressed prefix reuse · KV-aware routing (hit rate doesn't decay with cluster size) ·
-five-tier storage · a runtime `store-vs-recompute` safety-net that refuses to lose to recompute ·
-server-pull-only NIXL for true multi-tenant QoS.** All vendor-neutral, across vLLM / SGLang / TRT-LLM / AIBrix.
-
----
-
-## Capability matrix — the vision is aggressive, the disclosure is honest
-
-We publish exactly what is built and what is not. This table is the contract, and it updates every milestone.
-
-| State type | Plane | Shipped | Roadmap |
-| :--------- | :---: | :-----: | :------ |
-| **KV cache** | A | ✅ identity addressing · 5-tier · KV-routing · economic brain · hard multi-tenancy · vendor-neutral | — |
-| Sandbox snapshot | A | — | P2 · reuses the spine |
-| Embedding / RAG-chunk | A | — | P2 · reuses the spine |
-| Tool-result memoization | A | — | P2 · idempotent-only |
-| **Agent long-term memory** | B | — | P3 · durable, governed, vector-indexed, multi-tenant |
-| **Durable execution state** | B | — | P3 · lineage DAG + crash-resume; integrates Temporal-class engines |
-
-✅ shipped · — not yet · P2/P3 roadmap. Full architecture (HLD/LLD) available to active contributors on request.
-
-> **Why publish this?** Because the alternative — an umbrella with no spine and no disclosed edges — is
-> exactly what the hyperscaler narratives are. Our honesty about the boundary *is* the differentiation.
+The adapters under `src/adapters/` other than vLLM are interface shims, not engine integrations yet.
 
 ---
 
 ## What works today
 
-`make all` — **207 unit tests across 38 gtest binaries**, plus Go and Python suites; verified end-to-end on one machine.
+- **L1 engine**: BLAKE3 identity hashing, lock-free ART reads, persistent ART with WAL, cross-process pull, per-tenant priority scheduler.
+- **L2 coordination**: HRW + Bloom routing, etcd membership.
+- **L3 service**: 3-D quotas, three priority classes with anti-starvation, mTLS with rotation, optional fail-closed regulated mode.
+- **L4 integration**: vLLM connector, gRPC service, OTLP traces, Prometheus metrics.
+- **Kubernetes**: Helm chart, operator, `KVCacheTenant` CRD, kind end-to-end test.
+- **B-plane, first step**: durable single-node ingest (`StatePut` / `StateGet` over a WAL, with DRAM degradation and replay).
+- **Tests**: 500+ C++ tests (ctest) plus Go and Python suites; CI runs on Ubuntu 22.04.
 
-- **L1 Engine** — BLAKE3 identity hashing · lock-free ART reads (p99 ≤ 10 µs) · persistent ART with WAL durability · cross-process Pull · per-tenant priority scheduler
-- **L2 Coordination** — HRW + Bloom routing · real etcd (HTTP + gRPC v3)
-- **L3 Service** — 3D quotas · 3 priority classes with anti-starvation · mTLS with auto-rotation
-- **L4 Integration** — vLLM / SGLang / AIBrix / TRT-LLM over one C ABI · gRPC service · OTLP traces · Prometheus
-- **K8s** — Helm chart · operator (9 resources from one apply) · `KVCacheTenant` CRD · kind E2E
+Security posture and known gaps: [SECURITY.md](SECURITY.md).
 
-### Honestly not done yet
-- **Real RDMA backends** (UCX / GDR / GDS / NVLink) — interface ready, awaits IB/RoCE fabric
-- **Cross-node gRPC data path** — in-process today; NIXL descriptor exchange lands in M-3
-- **B-plane (agent memory, durable execution)** — **in design, not built.** Roadmap, not a claim.
+### What the KV layer is worth (projection)
 
-An **honest MVP**: the A-plane architecture is complete and verified; hardening and the B-plane are next.
+One 100K-token RAG query with a 90K shared prefix, Llama-3.1-70B on 8× H100, 95% steady-state hit rate, $4/h per H100:
 
----
+| | Cold start | With the KV layer |
+|---|---:|---:|
+| End-to-end latency | 525 s | 30 s |
+| Cost per query | $1.17 | $0.07 |
 
-## Where this is going
-
-> **Our bet:** within three years, every serious enterprise AI platform will run a dedicated **state data
-> plane** — separate from any inference engine, multi-tenant by design, integrated with multi-cloud
-> infrastructure rather than reinventing it, and **open** rather than locked to one cloud or one chip.
-
-The recompute-avoidance plane is shipped. The frontier no incumbent owns is the **B-plane**: where an
-agent's **memory** and its **in-flight execution state** become durable, governed, portable, and
-vendor-neutral. That's the half of "AI state" the market keeps naming and never building openly.
-
-*(KV is the plane we shipped first; the platform — **AgentStateStorage** — is state.)*
+<sub>A traced **projection** from the design documents, not a benchmark. A reproducible benchmark on real multi-turn agent traces (TTFT and cost per turn) is on the roadmap and will replace it.</sub>
 
 ---
 
-## Architecture · API · Quickstart
+## Roadmap
 
-Four layers, twelve subsystems, **83 traceable design decisions** — every line of code references the
-decision it implements. **Six verbs, one C ABI** (`lookup / reserve / publish / fetch / seal / release`
-+ event subscribe) — the same substrate every future state type plugs into. Async-first, zero-copy,
-tier-opaque.
+| Milestone | Scope |
+|---|---|
+| **M0** (now) | License and governance, CI green, honest matrix |
+| **M1** | gRPC API + Python SDK; OpenAI Agents SDK and LangGraph integrations, single node |
+| **M2** | Session tree + erase · hold · audit, with a demo: fork a coding agent eight ways, kill it, resume it, erase a user and get a receipt |
+| **M3** | MCP server; reproducible agent-trace benchmark |
+| **M4** | vLLM / SGLang offload tiers; cross-node data path; KV prefix in the session tree |
+
+## Landscape (as of 2026-10)
+
+| | Focus | What this project adds |
+|---|---|---|
+| Inference engines: vLLM tiered offloading ([2026-09-10](https://vllm.ai/blog/2026-09-10-tiered-kv-offloading)), SGLang HiCache, NVIDIA Dynamo ([KVBM deprecated in v1.5, 2026-09-18](https://docs.nvidia.com/dynamo/reference/releases/deprecations)) | KV offload inside one engine | A shared, multi-tenant tier behind them, and KV as one part of a session |
+| Storage KV tiers: NVIDIA CMX partners ([2026-03](https://www.blocksandfiles.com/ai-ml/2026/03/30/nvidia-and-its-partners-kv-cache-extenders/5209284)) | Fast KV capacity close to the GPU | Software-only, any hardware; the durable tier underneath a cache tier |
+| Agent platforms: OpenAI Agents SDK sandbox snapshots ([2026-04](https://openai.github.io/openai-agents-js/guides/sandbox-agents)), Cloudflare Project Think session trees ([2026-04](https://blog.cloudflare.com/project-think/)), Temporal sandboxes ([2026-04](https://temporal.io/blog/introducing-temporal-and-agentic-sandboxes-openai-agents-sdk)) | Snapshot / fork / resume inside one platform | One session format across engines, frameworks and clouds, self-hosted |
+| Agent memory: Letta context repositories ([2026-03](https://www.letta.com/blog/our-next-phase)), Anthropic Dreams ([2026-05](https://platform.claude.com/docs/en/managed-agents/dreams)), Mem0, Zep | Memory records and consolidation | Memory in the same lineage as KV and workspace, so erase cascades across all of them |
+
+---
+
+## Build
 
 ```bash
 git clone https://github.com/Stephen-Pu/agent-state-storage.git && cd agent-state-storage
 python3 -m venv .venv && source .venv/bin/activate && pip install cffi pytest
-make all      # zero warnings · 210/210 tests pass · ~4 min cold start
+make all      # C++ (ctest), Go and Python suites
 ```
 
-Build & setup: [BUILD.md](./BUILD.md). Design principles and API surface (HLD/LLD) available to active contributors on request.
+Details: [BUILD.md](BUILD.md). Design documents (HLD/LLD) are available to active contributors on request.
 
----
+## Contributing
+
+Issues and pull requests are welcome; please read [CONTRIBUTING.md](CONTRIBUTING.md). Contributors sign a [CLA](CLA.md) once.
 
 ## Acknowledgments
 
-Standing on the shoulders of: **vLLM** · **SGLang** · **Mooncake** (FAST'25) · **LMCache** ·
-**NVIDIA Dynamo / NIXL** · **3FS** / **DAOS** · **Alluxio** · **BLAKE3** · **etcd** · **gRPC**.
+**vLLM** · **SGLang** · **Mooncake** · **LMCache** · **NVIDIA Dynamo / NIXL** · **3FS** · **DAOS** · **Alluxio** · **BLAKE3** · **etcd** · **gRPC**.
 
 ## License
 
-[Apache-2.0](./LICENSE)
+[Apache-2.0](LICENSE). See [NOTICE](NOTICE).
 
----
-
-<sub>Built by [Stephen Pu](https://github.com/Stephen-Pu). 6 first principles · 83 traceable design decisions.
-Vision aggressive, disclosure honest — the capability matrix is the contract.</sub>
+<sub>Built by [Stephen Pu](https://github.com/Stephen-Pu).</sub>

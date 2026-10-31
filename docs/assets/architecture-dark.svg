@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640" role="img" aria-label="Architecture: agents, SDK, session layer, state planes, spine, engines and storage">
+<style>
+  .t  { font-family: Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; fill: #EAF0FB; }
+  .s  { font-family: Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; fill: #9DB0D3; }
+  .d  { font-family: Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; fill: #61739A; }
+  .m  { font-family: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace; }
+  .flow  { stroke-dasharray: 5 9; animation: flow 1.6s linear infinite; }
+  .pulse { animation: pulse 2.8s ease-in-out infinite; }
+  @keyframes flow  { to { stroke-dashoffset: -28; } }
+  @keyframes pulse { 0%,100% { opacity: .25; } 50% { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) {
+    .flow, .pulse { animation: none; }
+  }
+</style>
+<defs>
+  <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#05080F"/><stop offset="1" stop-color="#0B1530"/>
+  </linearGradient>
+  <linearGradient id="brand" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0" stop-color="#22D3EE"/><stop offset=".5" stop-color="#A78BFA"/>
+    <stop offset="1" stop-color="#FBBF24"/>
+  </linearGradient>
+  <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+    <path d="M32 0H0V32" fill="none" stroke="#1C2B4D" stroke-width="1" opacity=".55"/>
+  </pattern>
+  <radialGradient id="aura" cx=".5" cy=".5" r=".5">
+    <stop offset="0" stop-color="#A78BFA" stop-opacity="0.30"/>
+    <stop offset=".55" stop-color="#22D3EE" stop-opacity="0.10"/>
+    <stop offset="1" stop-color="#22D3EE" stop-opacity="0"/>
+  </radialGradient>
+  <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+    <feGaussianBlur stdDeviation="7"/>
+  </filter>
+</defs>
+<rect width="1280" height="640" rx="18" fill="url(#bg)"/>
+<rect width="1280" height="640" rx="18" fill="url(#grid)"/>
+<text x="48" y="58" font-size="24" font-weight="700" class="t">Where it sits</text>
+<circle cx="790" cy="52" r="6" fill="#34D399"/><text x="803" y="57" font-size="15" class="s">shipped</text>
+<circle cx="890.2" cy="52" r="6" fill="#FBBF24"/><text x="903.2" y="57" font-size="15" class="s">next (M1–M2)</text>
+<circle cx="1033.4" cy="52" r="6" fill="#64748B"/><text x="1046.4" y="57" font-size="15" class="s">later</text>
+<rect x="48" y="92" width="1184" height="72" rx="14" fill="#111E3B" stroke="#2A3D66" stroke-width="1"/>
+<text x="72" y="135" font-size="17" font-weight="700" class="t">Your agents</text>
+<g transform="translate(270,111)"><rect width="177" height="34" rx="17.0" fill="#FBBF24" fill-opacity=".12" stroke="#FBBF24" stroke-opacity=".55"/><circle cx="16" cy="17.0" r="4.5" fill="#FBBF24"/><text x="28" y="21.9" font-size="14" class="t ">OpenAI Agents SDK</text></g>
+<g transform="translate(460.79999999999995,111)"><rect width="110" height="34" rx="17.0" fill="#FBBF24" fill-opacity=".12" stroke="#FBBF24" stroke-opacity=".55"/><circle cx="16" cy="17.0" r="4.5" fill="#FBBF24"/><text x="28" y="21.9" font-size="14" class="t ">LangGraph</text></g>
+<g transform="translate(584.4,111)"><rect width="126" height="34" rx="17.0" fill="#64748B" fill-opacity=".12" stroke="#64748B" stroke-opacity=".55"/><circle cx="16" cy="17.0" r="4.5" fill="#64748B"/><text x="28" y="21.9" font-size="14" class="t ">MCP clients</text></g>
+<g transform="translate(724.8,111)"><rect width="143" height="34" rx="17.0" fill="#64748B" fill-opacity=".12" stroke="#64748B" stroke-opacity=".55"/><circle cx="16" cy="17.0" r="4.5" fill="#64748B"/><text x="28" y="21.9" font-size="14" class="t ">your own loop</text></g>
+<path d="M58 164v12" stroke="#22D3EE" stroke-width="2" class="flow"/>
+<rect x="48" y="176" width="1184" height="72" rx="14" fill="#111E3B" stroke="#2A3D66" stroke-width="1"/>
+<text x="72" y="219" font-size="17" font-weight="700" class="t">SDK · API</text>
+<g transform="translate(270,195)"><rect width="118" height="34" rx="17.0" fill="#FBBF24" fill-opacity=".12" stroke="#FBBF24" stroke-opacity=".55"/><circle cx="16" cy="17.0" r="4.5" fill="#FBBF24"/><text x="28" y="21.9" font-size="14" class="t ">Python SDK</text></g>
+<g transform="translate(402.0,195)"><rect width="101" height="34" rx="17.0" fill="#FBBF24" fill-opacity=".12" stroke="#FBBF24" stroke-opacity=".55"/><circle cx="16" cy="17.0" r="4.5" fill="#FBBF24"/><text x="28" y="21.9" font-size="14" class="t ">gRPC API</text></g>
+<g transform="translate(517.2,195)"><rect width="152" height="34" rx="17.0" fill="#64748B" fill-opacity=".12" stroke="#64748B" stroke-opacity=".55"/><circle cx="16" cy="17.0" r="4.5" fill="#64748B"/><text x="28" y="21.9" font-size="14" class="t ">TypeScript SDK</text></g>
+<path d="M58 248v12" stroke="#22D3EE" stroke-width="2" class="flow"/>
+<rect x="48" y="260" width="1184" height="72" rx="14" fill="#0E1830" stroke="#A78BFA" stroke-width="2"/>
+<rect x="48" y="260" width="1184" height="72" rx="14" fill="none" stroke="#A78BFA" stroke-width="2" opacity=".6" class="pulse"/>
+<text x="72" y="303" font-size="17" font-weight="700" class="t">Session layer</text>
+<g transform="translate(270,279)"><rect width="135" height="34" rx="17.0" fill="#FBBF24" fill-opacity=".12" stroke="#FBBF24" stroke-opacity=".55"/><circle cx="16" cy="17.0" r="4.5" fill="#FBBF24"/><text x="28" y="21.9" font-size="14" class="t ">session tree</text></g>
+<g transform="translate(418.8,279)"><rect width="202" height="34" rx="17.0" fill="#FBBF24" fill-opacity=".12" stroke="#FBBF24" stroke-opacity=".55"/><circle cx="16" cy="17.0" r="4.5" fill="#FBBF24"/><text x="28" y="21.9" font-size="14" class="t ">erase · hold · audit</text></g>
+<g transform="translate(634.8,279)"><rect width="227" height="34" rx="17.0" fill="#34D399" fill-opacity=".12" stroke="#34D399" stroke-opacity=".55"/><circle cx="16" cy="17.0" r="4.5" fill="#34D399"/><text x="28" y="21.9" font-size="14" class="t ">keep-or-recompute brain</text></g>
+<path d="M58 332v12" stroke="#22D3EE" stroke-width="2" class="flow"/>
+<rect x="48" y="344" width="1184" height="72" rx="14" fill="#111E3B" stroke="#2A3D66" stroke-width="1"/>
+<text x="72" y="387" font-size="17" font-weight="700" class="t">State</text>
+<g transform="translate(270,363)"><rect width="110" height="34" rx="17.0" fill="#34D399" fill-opacity=".12" stroke="#34D399" stroke-opacity=".55"/><circle cx="16" cy="17.0" r="4.5" fill="#34D399"/><text x="28" y="21.9" font-size="14" class="t ">KV prefix</text></g>
+<g transform="translate(393.6,363)"><rect width="227" height="34" rx="17.0" fill="#34D399" fill-opacity=".12" stroke="#34D399" stroke-opacity=".55"/><circle cx="16" cy="17.0" r="4.5" fill="#34D399"/><text x="28" y="21.9" font-size="14" class="t ">durable ingest (1 node)</text></g>
+<g transform="translate(634.8,363)"><rect width="135" height="34" rx="17.0" fill="#FBBF24" fill-opacity=".12" stroke="#FBBF24" stroke-opacity=".55"/><circle cx="16" cy="17.0" r="4.5" fill="#FBBF24"/><text x="28" y="21.9" font-size="14" class="t ">agent memory</text></g>
+<g transform="translate(783.5999999999999,363)"><rect width="160" height="34" rx="17.0" fill="#64748B" fill-opacity=".12" stroke="#64748B" stroke-opacity=".55"/><circle cx="16" cy="17.0" r="4.5" fill="#64748B"/><text x="28" y="21.9" font-size="14" class="t ">execution state</text></g>
+<g transform="translate(957.5999999999999,363)"><rect width="244" height="34" rx="17.0" fill="#64748B" fill-opacity=".12" stroke="#64748B" stroke-opacity=".55"/><circle cx="16" cy="17.0" r="4.5" fill="#64748B"/><text x="28" y="21.9" font-size="14" class="t ">embeddings · tool results</text></g>
+<path d="M58 416v12" stroke="#22D3EE" stroke-width="2" class="flow"/>
+<rect x="48" y="428" width="1184" height="72" rx="14" fill="#111E3B" stroke="#2A3D66" stroke-width="1"/>
+<text x="72" y="471" font-size="17" font-weight="700" class="t">Spine</text>
+<g transform="translate(270,447)"><rect width="185" height="34" rx="17.0" fill="#34D399" fill-opacity=".12" stroke="#34D399" stroke-opacity=".55"/><circle cx="16" cy="17.0" r="4.5" fill="#34D399"/><text x="28" y="21.9" font-size="14" class="t ">identity + lineage</text></g>
+<g transform="translate(469.2,447)"><rect width="202" height="34" rx="17.0" fill="#34D399" fill-opacity=".12" stroke="#34D399" stroke-opacity=".55"/><circle cx="16" cy="17.0" r="4.5" fill="#34D399"/><text x="28" y="21.9" font-size="14" class="t ">DRAM → NVMe → object</text></g>
+<g transform="translate(685.2,447)"><rect width="244" height="34" rx="17.0" fill="#34D399" fill-opacity=".12" stroke="#34D399" stroke-opacity=".55"/><circle cx="16" cy="17.0" r="4.5" fill="#34D399"/><text x="28" y="21.9" font-size="14" class="t ">hard multi-tenancy · mTLS</text></g>
+<g transform="translate(943.2,447)"><rect width="202" height="34" rx="17.0" fill="#64748B" fill-opacity=".12" stroke="#64748B" stroke-opacity=".55"/><circle cx="16" cy="17.0" r="4.5" fill="#64748B"/><text x="28" y="21.9" font-size="14" class="t ">cross-node data path</text></g>
+<path d="M58 500v12" stroke="#22D3EE" stroke-width="2" class="flow"/>
+<rect x="48" y="512" width="1184" height="72" rx="14" fill="#111E3B" stroke="#2A3D66" stroke-width="1"/>
+<text x="72" y="555" font-size="17" font-weight="700" class="t">Engines · storage</text>
+<g transform="translate(270,531)"><rect width="68" height="34" rx="17.0" fill="#34D399" fill-opacity=".12" stroke="#34D399" stroke-opacity=".55"/><circle cx="16" cy="17.0" r="4.5" fill="#34D399"/><text x="28" y="21.9" font-size="14" class="t ">vLLM</text></g>
+<g transform="translate(351.6,531)"><rect width="84" height="34" rx="17.0" fill="#64748B" fill-opacity=".12" stroke="#64748B" stroke-opacity=".55"/><circle cx="16" cy="17.0" r="4.5" fill="#64748B"/><text x="28" y="21.9" font-size="14" class="t ">SGLang</text></g>
+<g transform="translate(450.0,531)"><rect width="84" height="34" rx="17.0" fill="#64748B" fill-opacity=".12" stroke="#64748B" stroke-opacity=".55"/><circle cx="16" cy="17.0" r="4.5" fill="#64748B"/><text x="28" y="21.9" font-size="14" class="t ">Dynamo</text></g>
+<g transform="translate(548.4,531)"><rect width="227" height="34" rx="17.0" fill="#34D399" fill-opacity=".12" stroke="#34D399" stroke-opacity=".55"/><circle cx="16" cy="17.0" r="4.5" fill="#34D399"/><text x="28" y="21.9" font-size="14" class="t ">object storage (S3 API)</text></g>
+</svg>

@@ -1,0 +1,11 @@
+AgentStateStorage
+Copyright 2026 Stephen Pu
+
+This product includes software developed by Stephen Pu and contributors
+(https://github.com/Stephen-Pu/agent-state-storage).
+
+Licensed under the Apache License, Version 2.0. See LICENSE.
+
+Third-party components fetched at build time (BLAKE3, GoogleTest,
+nlohmann/json) and vendored under third_party/ (etcd protocol definitions)
+remain under their own licenses.
