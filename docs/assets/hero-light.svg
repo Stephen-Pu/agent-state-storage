@@ -1,73 +1,86 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 440" width="1280" height="440" role="img" aria-label="AgentStateStorage: the open session layer for AI agents">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 430" width="1040" height="430" role="img" aria-label="AgentStateStorage: the open session layer for AI agents">
 <style>
   .t  { font-family: Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; fill: #0A1324; }
   .s  { font-family: Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; fill: #46597A; }
   .d  { font-family: Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif; fill: #8393AE; }
   .m  { font-family: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace; }
-  .flow  { stroke-dasharray: 5 9; animation: flow 1.6s linear infinite; }
-  .pulse { animation: pulse 2.8s ease-in-out infinite; }
-  @keyframes flow  { to { stroke-dashoffset: -28; } }
-  @keyframes pulse { 0%,100% { opacity: .25; } 50% { opacity: 1; } }
+  .eb { font-family: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace; font-size: 12.5px; letter-spacing: 2px; fill: #8393AE; }
+  .spark { stroke-dasharray: 2 40; stroke-linecap: round; animation: spark 2.2s linear infinite; }
+  .spark.slow { animation-duration: 3.4s; }
+  .march { stroke-dasharray: 7 7; animation: march 1.8s linear infinite; }
+  .breathe { animation: breathe 4s ease-in-out infinite; }
+  @keyframes spark { to { stroke-dashoffset: -84; } }
+  @keyframes march { to { stroke-dashoffset: -28; } }
+  @keyframes breathe { 0%,100% { opacity: .5; } 50% { opacity: 1; } }
   @media (prefers-reduced-motion: reduce) {
-    .flow, .pulse { animation: none; }
+    .spark, .march, .breathe { animation: none; }
   }
 </style>
 <defs>
-  <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-    <stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#EDF3FC"/>
-  </linearGradient>
-  <linearGradient id="brand" x1="0" y1="0" x2="1" y2="0">
-    <stop offset="0" stop-color="#0891B2"/><stop offset=".5" stop-color="#7C3AED"/>
-    <stop offset="1" stop-color="#D97706"/>
-  </linearGradient>
-  <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
-    <path d="M32 0H0V32" fill="none" stroke="#D3DEEE" stroke-width="1" opacity=".55"/>
+  <pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse">
+    <circle cx="1.5" cy="1.5" r="1.1" fill="#CDD6E8"/>
   </pattern>
-  <radialGradient id="aura" cx=".5" cy=".5" r=".5">
-    <stop offset="0" stop-color="#7C3AED" stop-opacity="0.12"/>
-    <stop offset=".55" stop-color="#0891B2" stop-opacity="0.04"/>
-    <stop offset="1" stop-color="#0891B2" stop-opacity="0"/>
+  <radialGradient id="aur1" cx=".5" cy=".5" r=".5">
+    <stop offset="0" stop-color="#C4B5FD" stop-opacity=".35"/>
+    <stop offset="1" stop-color="#C4B5FD" stop-opacity="0"/>
   </radialGradient>
-  <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
-    <feGaussianBlur stdDeviation="7"/>
+  <radialGradient id="aur2" cx=".5" cy=".5" r=".5">
+    <stop offset="0" stop-color="#A5F3FC" stop-opacity=".35"/>
+    <stop offset="1" stop-color="#A5F3FC" stop-opacity="0"/>
+  </radialGradient>
+  <linearGradient id="word" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0" stop-color="#7C3AED"/><stop offset="1" stop-color="#0891B2"/>
+  </linearGradient>
+  <!-- canvas units: a straight line has a zero-width bounding box, which
+       would leave a bounding-box gradient unpainted -->
+  <linearGradient id="span" gradientUnits="userSpaceOnUse" x1="40" y1="0" x2="1000" y2="0">
+    <stop offset="0" stop-color="#7C3AED"/><stop offset="1" stop-color="#0891B2"/>
+  </linearGradient>
+  <linearGradient id="heat" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0" stop-color="#D97706"/><stop offset="1" stop-color="#0284C7"/>
+  </linearGradient>
+  <filter id="soft" x="-20%" y="-20%" width="140%" height="160%">
+    <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#1E293B" flood-opacity=".10"/>
+  </filter>
+  <filter id="bloom" x="-30%" y="-80%" width="160%" height="260%">
+    <feGaussianBlur stdDeviation="16"/>
   </filter>
 </defs>
-<rect width="1280" height="440" rx="18" fill="url(#bg)"/>
-<rect width="1280" height="440" rx="18" fill="url(#grid)"/>
-<ellipse cx="990" cy="220" rx="300" ry="210" fill="url(#aura)"/>
-<g transform="translate(64,0)">
-<rect x="0" y="86" width="268" height="30" rx="15" fill="#0891B2" fill-opacity=".1" stroke="#0891B2" stroke-opacity=".5"/>
-<text x="16" y="106" font-size="13" letter-spacing="2" class="m" fill="#0891B2">OPEN SOURCE · APACHE-2.0</text>
-<text x="0" y="178" font-size="58" font-weight="800" class="t" letter-spacing="-1.5">Agent<tspan fill="url(#brand)">State</tspan>Storage</text>
-<text x="0" y="226" font-size="27" font-weight="600" class="t">The open session layer for AI agents</text>
-<text x="0" y="266" font-size="18" class="s">Snapshot, fork, resume and erase an agent session —</text>
-<text x="0" y="292" font-size="18" class="s">its KV, workspace and memory, together.</text>
-<text x="0" y="318" font-size="18" class="s">On your infrastructure. Any engine. Any cloud.</text>
-<g transform="translate(0,350)"><rect width="106" height="34" rx="17.0" fill="#0891B2" fill-opacity=".12" stroke="#0891B2" stroke-opacity=".55"/><circle cx="16" cy="17.0" r="4.5" fill="#0891B2"/><text x="28" y="22.2" font-size="15" class="t m">snapshot</text></g>
-<g transform="translate(118.0,350)"><rect width="70" height="34" rx="17.0" fill="#7C3AED" fill-opacity=".12" stroke="#7C3AED" stroke-opacity=".55"/><circle cx="16" cy="17.0" r="4.5" fill="#7C3AED"/><text x="28" y="22.2" font-size="15" class="t m">fork</text></g>
-<g transform="translate(200.0,350)"><rect width="88" height="34" rx="17.0" fill="#059669" fill-opacity=".12" stroke="#059669" stroke-opacity=".55"/><circle cx="16" cy="17.0" r="4.5" fill="#059669"/><text x="28" y="22.2" font-size="15" class="t m">resume</text></g>
-<g transform="translate(300.0,350)"><rect width="79" height="34" rx="17.0" fill="#DC2626" fill-opacity=".12" stroke="#DC2626" stroke-opacity=".55"/><circle cx="16" cy="17.0" r="4.5" fill="#DC2626"/><text x="28" y="22.2" font-size="15" class="t m">erase</text></g>
-</g>
-<g><path d="M836 220C855.0 220 855.0 220 874 220" fill="none" stroke="#C3D0E4" stroke-width="2"/><path d="M836 220C855.0 220 855.0 220 874 220" fill="none" stroke="#0891B2" stroke-width="2" class="flow"/></g>
-<g><path d="M946 220C970.0 220 970.0 128 994 128" fill="none" stroke="#C3D0E4" stroke-width="2"/><path d="M946 220C970.0 220 970.0 128 994 128" fill="none" stroke="#7C3AED" stroke-width="2" class="flow"/></g>
-<g><path d="M946 220C970.0 220 970.0 220 994 220" fill="none" stroke="#C3D0E4" stroke-width="2"/><path d="M946 220C970.0 220 970.0 220 994 220" fill="none" stroke="#7C3AED" stroke-width="2" class="flow"/></g>
-<g><path d="M946 220C970.0 220 970.0 312 994 312" fill="none" stroke="#C3D0E4" stroke-width="2"/><path d="M946 220C970.0 220 970.0 312 994 312" fill="none" stroke="#7C3AED" stroke-width="2" class="flow"/></g>
-<g><path d="M1066 128C1090.0 128 1090.0 84 1114 84" fill="none" stroke="#C3D0E4" stroke-width="2"/><path d="M1066 128C1090.0 128 1090.0 84 1114 84" fill="none" stroke="#D97706" stroke-width="2" class="flow"/></g>
-<g><path d="M1066 128C1090.0 128 1090.0 168 1114 168" fill="none" stroke="#C3D0E4" stroke-width="2"/><path d="M1066 128C1090.0 128 1090.0 168 1114 168" fill="none" stroke="#D97706" stroke-width="2" class="flow"/></g>
-<g><path d="M1066 312C1090.0 312 1090.0 268 1114 268" fill="none" stroke="#C3D0E4" stroke-width="2"/><path d="M1066 312C1090.0 312 1090.0 268 1114 268" fill="none" stroke="#059669" stroke-width="2" class="flow"/></g>
-<g><path d="M1066 312C1090.0 312 1090.0 356 1114 356" fill="none" stroke="#C3D0E4" stroke-width="2"/><path d="M1066 312C1090.0 312 1090.0 356 1114 356" fill="none" stroke="#059669" stroke-width="2" class="flow"/></g>
-<g transform="translate(800,220)"><rect x="-36" y="-17" width="72" height="34" rx="17" fill="#FFFFFF" stroke="#C3D0E4" stroke-width="1.5"/><circle cx="-17" cy="0" r="5.5" fill="#0891B2"/><circle cx="0" cy="0" r="5.5" fill="#7C3AED"/><circle cx="17" cy="0" r="5.5" fill="#D97706"/></g>
-<g transform="translate(910,220)"><circle r="30" fill="#7C3AED" opacity="0.22" filter="url(#glow)" class="pulse"/><rect x="-36" y="-17" width="72" height="34" rx="17" fill="#FFFFFF" stroke="#C3D0E4" stroke-width="1.5"/><circle cx="-17" cy="0" r="5.5" fill="#0891B2"/><circle cx="0" cy="0" r="5.5" fill="#7C3AED"/><circle cx="17" cy="0" r="5.5" fill="#D97706"/></g>
-<g transform="translate(1030,128)"><rect x="-36" y="-17" width="72" height="34" rx="17" fill="#FFFFFF" stroke="#C3D0E4" stroke-width="1.5"/><circle cx="-17" cy="0" r="5.5" fill="#0891B2"/><circle cx="0" cy="0" r="5.5" fill="#7C3AED"/><circle cx="17" cy="0" r="5.5" fill="#D97706"/></g>
-<g transform="translate(1030,220)"><rect x="-36" y="-17" width="72" height="34" rx="17" fill="#FFFFFF" stroke="#C3D0E4" stroke-width="1.5"/><circle cx="-17" cy="0" r="5.5" fill="#0891B2"/><circle cx="0" cy="0" r="5.5" fill="#7C3AED"/><circle cx="17" cy="0" r="5.5" fill="#D97706"/></g>
-<g transform="translate(1030,312)"><rect x="-36" y="-17" width="72" height="34" rx="17" fill="#FFFFFF" stroke="#C3D0E4" stroke-width="1.5"/><circle cx="-17" cy="0" r="5.5" fill="#0891B2"/><circle cx="0" cy="0" r="5.5" fill="#7C3AED"/><circle cx="17" cy="0" r="5.5" fill="#D97706"/></g>
-<g transform="translate(1150,84)"><circle r="30" fill="#D97706" opacity="0.22" filter="url(#glow)" class="pulse"/><rect x="-36" y="-17" width="72" height="34" rx="17" fill="#FFFFFF" stroke="#C3D0E4" stroke-width="1.5"/><circle cx="-17" cy="0" r="5.5" fill="#0891B2"/><circle cx="0" cy="0" r="5.5" fill="#7C3AED"/><circle cx="17" cy="0" r="5.5" fill="#D97706"/></g>
-<g transform="translate(1150,168)"><rect x="-36" y="-17" width="72" height="34" rx="17" fill="#FFFFFF" stroke="#C3D0E4" stroke-width="1.5"/><circle cx="-17" cy="0" r="5.5" fill="#0891B2"/><circle cx="0" cy="0" r="5.5" fill="#7C3AED"/><circle cx="17" cy="0" r="5.5" fill="#D97706"/></g>
-<g transform="translate(1150,268)"><circle r="30" fill="#059669" opacity="0.22" filter="url(#glow)" class="pulse"/><rect x="-36" y="-17" width="72" height="34" rx="17" fill="#FFFFFF" stroke="#C3D0E4" stroke-width="1.5"/><circle cx="-17" cy="0" r="5.5" fill="#0891B2"/><circle cx="0" cy="0" r="5.5" fill="#7C3AED"/><circle cx="17" cy="0" r="5.5" fill="#D97706"/></g>
-<g transform="translate(1150,356)"><rect x="-36" y="-17" width="72" height="34" rx="17" fill="#FFFFFF" stroke="#C3D0E4" stroke-width="1.5"/><circle cx="-17" cy="0" r="5.5" fill="#0891B2"/><circle cx="0" cy="0" r="5.5" fill="#7C3AED"/><circle cx="17" cy="0" r="5.5" fill="#D97706"/></g>
-<text x="910" y="188" text-anchor="middle" font-size="12" class="d m">fork ×3</text>
-<text x="800" y="262" text-anchor="middle" font-size="12" class="d m">s0</text>
-<circle cx="836" cy="410" r="5" fill="#0891B2"/><text x="847" y="415" font-size="14" class="s">KV</text>
-<circle cx="893.0" cy="410" r="5" fill="#7C3AED"/><text x="904.0" y="415" font-size="14" class="s">workspace</text>
-<circle cx="1009.5" cy="410" r="5" fill="#D97706"/><text x="1020.5" y="415" font-size="14" class="s">memory</text>
+<rect width="1040" height="430" rx="20" fill="#FBFCFF"/>
+<ellipse cx="230" cy="250" rx="420" ry="360" fill="url(#aur1)"/>
+<ellipse cx="840" cy="230" rx="420" ry="360" fill="url(#aur2)"/>
+<rect width="1040" height="430" rx="20" fill="url(#dots)" opacity=".7"/>
+<rect x="40" y="52" width="248" height="28" rx="14" fill="#0891B2" fill-opacity=".1" stroke="#0891B2" stroke-opacity=".55"/><text x="54" y="71" font-size="12.5" letter-spacing="2" class="m" fill="#0891B2">OPEN SOURCE · APACHE-2.0</text>
+<text x="38" y="142" font-size="46" font-weight="800" letter-spacing="-1.4" class="t">Agent<tspan fill="url(#word)">State</tspan>Storage</text>
+<text x="40" y="184" font-size="23" font-weight="650" class="t">The open session layer for AI agents</text>
+<text x="40" y="222" font-size="16.5" class="s">Snapshot, fork, resume and erase an agent session —</text>
+<text x="40" y="247" font-size="16.5" class="s">its history, memory, workspace and KV cache, together.</text>
+<text x="40" y="272" font-size="16.5" class="s">On your infrastructure. Any engine. Any cloud.</text>
+<rect x="40" y="306" width="140" height="36" rx="18.0" fill="#0891B2" fill-opacity=".12" stroke="#0891B2" stroke-opacity=".6"/><circle cx="56" cy="324.0" r="4.5" fill="#0891B2"/><text x="68" y="329.2" font-size="15" class="t m">snapshot</text><circle cx="159.0" cy="324.0" r="9" fill="none" stroke="#B45309" stroke-width="1.4"/><path d="M159.0 315.0a9 9 0 0 1 0 18z" fill="#B45309"/>
+<rect x="190.0" y="306" width="104" height="36" rx="18.0" fill="#7C3AED" fill-opacity=".12" stroke="#7C3AED" stroke-opacity=".6"/><circle cx="206.0" cy="324.0" r="4.5" fill="#7C3AED"/><text x="218.0" y="329.2" font-size="15" class="t m">fork</text><circle cx="273.0" cy="324.0" r="9" fill="#059669" fill-opacity=".18" stroke="#059669" stroke-width="1.4"/><path d="M269.0 324.0l2.8 2.9 5.2-5.6" fill="none" stroke="#059669" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="304.0" y="306" width="122" height="36" rx="18.0" fill="#059669" fill-opacity=".12" stroke="#059669" stroke-opacity=".6"/><circle cx="320.0" cy="324.0" r="4.5" fill="#059669"/><text x="332.0" y="329.2" font-size="15" class="t m">resume</text><circle cx="405.0" cy="324.0" r="9" fill="#059669" fill-opacity=".18" stroke="#059669" stroke-width="1.4"/><path d="M401.0 324.0l2.8 2.9 5.2-5.6" fill="none" stroke="#059669" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="436.0" y="306" width="126" height="36" rx="18.0" fill="#DC2626" fill-opacity=".12" stroke="#DC2626" stroke-opacity=".6"/><circle cx="452.0" cy="324.0" r="4.5" fill="#DC2626"/><text x="464.0" y="329.2" font-size="15" class="t m">erase</text><rect x="521.0" y="314.0" width="31" height="20" rx="10" fill="#B45309" fill-opacity=".14" stroke="#B45309" stroke-width="1.2"/><text x="528.0" y="328.5" font-size="12.5" font-weight="700" class="m" fill="#B45309">M2</text>
+<circle cx="49" cy="376" r="9" fill="#059669" fill-opacity=".18" stroke="#059669" stroke-width="1.4"/><path d="M45 376l2.8 2.9 5.2-5.6" fill="none" stroke="#059669" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><text x="65" y="381" font-size="14" class="s">works today</text><circle cx="176.6" cy="376" r="9" fill="none" stroke="#B45309" stroke-width="1.4"/><path d="M176.6 367a9 9 0 0 1 0 18z" fill="#B45309"/><text x="192.6" y="381" font-size="14" class="s">per framework</text><rect x="310.4" y="366" width="31" height="20" rx="10" fill="#B45309" fill-opacity=".14" stroke="#B45309" stroke-width="1.2"/><text x="317.4" y="380.5" font-size="12.5" font-weight="700" class="m" fill="#B45309">M2</text><text x="348.2" y="381" font-size="14" class="s">planned</text>
+<rect x="560" y="36" width="440" height="358" rx="22" fill="#FFFFFF" fill-opacity=".9" stroke="#A9B6CF" stroke-width="1.3" filter="url(#soft)"/>
+<text x="582" y="68" class="eb">ONE SESSION, FORKED</text>
+<path d="M652 200C665.0 200 665.0 200 678 200" fill="none" stroke="#0891B2" stroke-width="1.6" opacity=".4"/><path d="M652 200C665.0 200 665.0 200 678 200" fill="none" stroke="#0891B2" stroke-width="3.2" class="spark"/>
+<path d="M746 200C767.0 200 767.0 124 788 124" fill="none" stroke="#7C3AED" stroke-width="1.6" opacity=".4"/><path d="M746 200C767.0 200 767.0 124 788 124" fill="none" stroke="#7C3AED" stroke-width="3.2" class="spark slow"/>
+<path d="M746 200C767.0 200 767.0 200 788 200" fill="none" stroke="#7C3AED" stroke-width="1.6" opacity=".4"/><path d="M746 200C767.0 200 767.0 200 788 200" fill="none" stroke="#7C3AED" stroke-width="3.2" class="spark slow"/>
+<path d="M746 200C767.0 200 767.0 276 788 276" fill="none" stroke="#7C3AED" stroke-width="1.6" opacity=".4"/><path d="M746 200C767.0 200 767.0 276 788 276" fill="none" stroke="#7C3AED" stroke-width="3.2" class="spark slow"/>
+<path d="M856 124C878.0 124 878.0 92 900 92" fill="none" stroke="#DB2777" stroke-width="1.6" opacity=".4"/><path d="M856 124C878.0 124 878.0 92 900 92" fill="none" stroke="#DB2777" stroke-width="3.2" class="spark slow"/>
+<path d="M856 124C878.0 124 878.0 156 900 156" fill="none" stroke="#DB2777" stroke-width="1.6" opacity=".4"/><path d="M856 124C878.0 124 878.0 156 900 156" fill="none" stroke="#DB2777" stroke-width="3.2" class="spark slow"/>
+<path d="M856 276C878.0 276 878.0 244 900 244" fill="none" stroke="#059669" stroke-width="1.6" opacity=".4"/><path d="M856 276C878.0 276 878.0 244 900 244" fill="none" stroke="#059669" stroke-width="3.2" class="spark slow"/>
+<path d="M856 276C878.0 276 878.0 308 900 308" fill="none" stroke="#059669" stroke-width="1.6" opacity=".4"/><path d="M856 276C878.0 276 878.0 308 900 308" fill="none" stroke="#059669" stroke-width="3.2" class="spark slow"/>
+<rect x="584" y="184" width="68" height="32" rx="16" fill="#FFFFFF" stroke="#A9B6CF" stroke-width="1.5"/><circle cx="597" cy="200" r="4.3" fill="#7C3AED"/><circle cx="611" cy="200" r="4.3" fill="#DB2777"/><circle cx="625" cy="200" r="4.3" fill="#D97706"/><circle cx="639" cy="200" r="4.3" fill="#0891B2"/>
+<ellipse cx="712" cy="200" rx="46" ry="26" fill="#7C3AED" opacity=".14" filter="url(#bloom)" class="breathe"/><rect x="678" y="184" width="68" height="32" rx="16" fill="#FFFFFF" stroke="#7C3AED" stroke-width="1.5"/><circle cx="691" cy="200" r="4.3" fill="#7C3AED"/><circle cx="705" cy="200" r="4.3" fill="#DB2777"/><circle cx="719" cy="200" r="4.3" fill="#D97706"/><circle cx="733" cy="200" r="4.3" fill="#0891B2"/>
+<rect x="788" y="108" width="68" height="32" rx="16" fill="#FFFFFF" stroke="#A9B6CF" stroke-width="1.5"/><circle cx="801" cy="124" r="4.3" fill="#7C3AED"/><circle cx="815" cy="124" r="4.3" fill="#DB2777"/><circle cx="829" cy="124" r="4.3" fill="#D97706"/><circle cx="843" cy="124" r="4.3" fill="#0891B2"/>
+<rect x="788" y="184" width="68" height="32" rx="16" fill="#FFFFFF" stroke="#A9B6CF" stroke-width="1.5"/><circle cx="801" cy="200" r="4.3" fill="#7C3AED"/><circle cx="815" cy="200" r="4.3" fill="#DB2777"/><circle cx="829" cy="200" r="4.3" fill="#D97706"/><circle cx="843" cy="200" r="4.3" fill="#0891B2"/>
+<rect x="788" y="260" width="68" height="32" rx="16" fill="#FFFFFF" stroke="#A9B6CF" stroke-width="1.5"/><circle cx="801" cy="276" r="4.3" fill="#7C3AED"/><circle cx="815" cy="276" r="4.3" fill="#DB2777"/><circle cx="829" cy="276" r="4.3" fill="#D97706"/><circle cx="843" cy="276" r="4.3" fill="#0891B2"/>
+<ellipse cx="934" cy="92" rx="46" ry="26" fill="#DB2777" opacity=".14" filter="url(#bloom)" class="breathe"/><rect x="900" y="76" width="68" height="32" rx="16" fill="#FFFFFF" stroke="#DB2777" stroke-width="1.5"/><circle cx="913" cy="92" r="4.3" fill="#7C3AED"/><circle cx="927" cy="92" r="4.3" fill="#DB2777"/><circle cx="941" cy="92" r="4.3" fill="#D97706"/><circle cx="955" cy="92" r="4.3" fill="#0891B2"/>
+<rect x="900" y="140" width="68" height="32" rx="16" fill="#FFFFFF" stroke="#A9B6CF" stroke-width="1.5"/><circle cx="913" cy="156" r="4.3" fill="#7C3AED"/><circle cx="927" cy="156" r="4.3" fill="#DB2777"/><circle cx="941" cy="156" r="4.3" fill="#D97706"/><circle cx="955" cy="156" r="4.3" fill="#0891B2"/>
+<ellipse cx="934" cy="244" rx="46" ry="26" fill="#059669" opacity=".14" filter="url(#bloom)" class="breathe"/><rect x="900" y="228" width="68" height="32" rx="16" fill="#FFFFFF" stroke="#059669" stroke-width="1.5"/><circle cx="913" cy="244" r="4.3" fill="#7C3AED"/><circle cx="927" cy="244" r="4.3" fill="#DB2777"/><circle cx="941" cy="244" r="4.3" fill="#D97706"/><circle cx="955" cy="244" r="4.3" fill="#0891B2"/>
+<rect x="900" y="292" width="68" height="32" rx="16" fill="#FFFFFF" stroke="#A9B6CF" stroke-width="1.5"/><circle cx="913" cy="308" r="4.3" fill="#7C3AED"/><circle cx="927" cy="308" r="4.3" fill="#DB2777"/><circle cx="941" cy="308" r="4.3" fill="#D97706"/><circle cx="955" cy="308" r="4.3" fill="#0891B2"/>
+<text x="712" y="170" text-anchor="middle" font-size="13" class="d m">fork ×3</text>
+<text x="618" y="236" text-anchor="middle" font-size="13" class="d m">s0</text>
+<circle cx="586" cy="366" r="4.5" fill="#7C3AED"/><text x="596" y="371" font-size="14" class="s">history</text><circle cx="671.2" cy="366" r="4.5" fill="#DB2777"/><text x="681.2" y="371" font-size="14" class="s">memory</text><circle cx="748.8000000000001" cy="366" r="4.5" fill="#D97706"/><text x="758.8000000000001" y="371" font-size="14" class="s">workspace</text><circle cx="849.2" cy="366" r="4.5" fill="#0891B2"/><text x="859.2" y="371" font-size="14" class="s">KV</text>
 </svg>

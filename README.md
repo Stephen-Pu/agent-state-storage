@@ -1,6 +1,6 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero-dark.svg">
-  <img alt="AgentStateStorage: the open session layer for AI agents. Snapshot, fork, resume and erase an agent session: its KV, workspace and memory, together." src="docs/assets/hero-light.svg" width="100%">
+  <img alt="AgentStateStorage: the open session layer for AI agents. Snapshot, fork, resume and erase an agent session: its history, memory, workspace and KV cache, together. Fork and resume work today, snapshot works per framework, erase is planned for M2." src="docs/assets/hero-light.svg" width="100%">
 </picture>
 
 [![CI](https://github.com/Stephen-Pu/agent-state-storage/actions/workflows/ci.yml/badge.svg)](https://github.com/Stephen-Pu/agent-state-storage/actions)
@@ -26,12 +26,12 @@ Every major platform now does a piece of this, inside its own walls. **AgentStat
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/session-tree-dark.svg">
-  <img alt="Session tree: snapshots s0 to s4, a crash at s3 resumed from s2, three forks from s2, and an erase that cascades to memory, embeddings, KV prefix and snapshot references, producing a receipt while a legal hold keeps the audit log." src="docs/assets/session-tree-light.svg" width="100%">
+  <img alt="Session tree, the M2 design: snapshots s0 to s4 that each capture history, memory, workspace and the KV prefix; a crash at s3 resumed from s2; three copy-on-write forks from s2; and an erase that cascades to memory, embeddings, KV prefix and snapshot references, producing a receipt while a legal hold keeps the audit log. Already working in M1: resume after a restart, fork by copy, and framework snapshots." src="docs/assets/session-tree-light.svg" width="100%">
 </picture>
 
 ### The four verbs
 
-> **Planned API (M1–M2), not implemented yet.** Shown so you can tell us if it fits your agent.
+> **Planned API (M2), not implemented yet.** Shown so you can tell us if it fits your agent. What runs today is in [Try it](#try-it).
 
 ```python
 from agent_state_storage import Client            # gRPC client, Python first, TypeScript next

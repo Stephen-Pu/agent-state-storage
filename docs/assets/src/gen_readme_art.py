@@ -23,178 +23,6 @@ THEMES = {
 }
 
 
-def style(t):
-    return f"""<style>
-  .t  {{ font-family: {FONT}; fill: {t['text']}; }}
-  .s  {{ font-family: {FONT}; fill: {t['sub']}; }}
-  .d  {{ font-family: {FONT}; fill: {t['dim']}; }}
-  .m  {{ font-family: {MONO}; }}
-  .flow  {{ stroke-dasharray: 5 9; animation: flow 1.6s linear infinite; }}
-  .pulse {{ animation: pulse 2.8s ease-in-out infinite; }}
-  @keyframes flow  {{ to {{ stroke-dashoffset: -28; }} }}
-  @keyframes pulse {{ 0%,100% {{ opacity: .25; }} 50% {{ opacity: 1; }} }}
-  @media (prefers-reduced-motion: reduce) {{
-    .flow, .pulse {{ animation: none; }}
-  }}
-</style>"""
-
-
-def defs(t, w, h):
-    return f"""<defs>
-  <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-    <stop offset="0" stop-color="{t['bg1']}"/><stop offset="1" stop-color="{t['bg2']}"/>
-  </linearGradient>
-  <linearGradient id="brand" x1="0" y1="0" x2="1" y2="0">
-    <stop offset="0" stop-color="{t['kv']}"/><stop offset=".5" stop-color="{t['ws']}"/>
-    <stop offset="1" stop-color="{t['mem']}"/>
-  </linearGradient>
-  <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
-    <path d="M32 0H0V32" fill="none" stroke="{t['grid']}" stroke-width="1" opacity=".55"/>
-  </pattern>
-  <radialGradient id="aura" cx=".5" cy=".5" r=".5">
-    <stop offset="0" stop-color="{t['ws']}" stop-opacity="{float(t['glow_op'])*0.55:.2f}"/>
-    <stop offset=".55" stop-color="{t['kv']}" stop-opacity="{float(t['glow_op'])*0.18:.2f}"/>
-    <stop offset="1" stop-color="{t['kv']}" stop-opacity="0"/>
-  </radialGradient>
-  <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
-    <feGaussianBlur stdDeviation="7"/>
-  </filter>
-</defs>
-<rect width="{w}" height="{h}" rx="18" fill="url(#bg)"/>
-<rect width="{w}" height="{h}" rx="18" fill="url(#grid)"/>"""
-
-
-def capsule(t, x, y, halo=None, crashed=False):
-    """A session snapshot: three lanes (KV, workspace, memory) in one capsule."""
-    out = [f'<g transform="translate({x},{y})">']
-    if halo:
-        out.append(f'<circle r="30" fill="{halo}" opacity="{t["glow_op"]}" filter="url(#glow)" class="pulse"/>')
-    out.append(f'<rect x="-36" y="-17" width="72" height="34" rx="17" fill="{t["panel"]}" '
-               f'stroke="{t["red"] if crashed else t["stroke"]}" stroke-width="1.5"/>')
-    for dx, c in ((-17, t["kv"]), (0, t["ws"]), (17, t["mem"])):
-        out.append(f'<circle cx="{dx}" cy="0" r="5.5" fill="{t["gray"] if crashed else c}"/>')
-    if crashed:
-        out.append(f'<path d="M-9-9L9 9M9-9L-9 9" stroke="{t["red"]}" stroke-width="3" stroke-linecap="round"/>')
-    out.append("</g>")
-    return "".join(out)
-
-
-def edge(t, x1, y1, x2, y2, color=None, width=2):
-    c = color or t["stroke"]
-    mx = (x1 + x2) / 2
-    d = f"M{x1} {y1}C{mx} {y1} {mx} {y2} {x2} {y2}"
-    return (f'<g><path d="{d}" fill="none" stroke="{t["stroke"]}" stroke-width="{width}"/>'
-            f'<path d="{d}" fill="none" stroke="{c}" stroke-width="{width}" class="flow"/></g>')
-
-
-def chip(t, x, y, label, color, w=None, h=34, fs=15, mono=False):
-    w = w or (len(label) * fs * 0.6 + 34)
-    fam = "m" if mono else ""
-    return (f'<g transform="translate({x},{y})"><rect width="{w:.0f}" height="{h}" rx="{h/2}" '
-            f'fill="{color}" fill-opacity=".12" stroke="{color}" stroke-opacity=".55"/>'
-            f'<circle cx="16" cy="{h/2}" r="4.5" fill="{color}"/>'
-            f'<text x="28" y="{h/2 + fs*0.35:.1f}" font-size="{fs}" class="t {fam}">{label}</text></g>'), w
-
-
-def hero(t):
-    w, h = 1280, 440
-    p = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" width="{w}" height="{h}" '
-         f'role="img" aria-label="AgentStateStorage: the open session layer for AI agents">',
-         style(t), defs(t, w, h)]
-    # brand ring glow behind the tree
-    p.append('<ellipse cx="990" cy="220" rx="300" ry="210" fill="url(#aura)"/>')
-    # left: words
-    p.append(f'<g transform="translate(64,0)">')
-    p.append(f'<rect x="0" y="86" width="268" height="30" rx="15" fill="{t["kv"]}" fill-opacity=".1" stroke="{t["kv"]}" stroke-opacity=".5"/>')
-    p.append(f'<text x="16" y="106" font-size="13" letter-spacing="2" class="m" fill="{t["kv"]}">OPEN SOURCE · APACHE-2.0</text>')
-    p.append(f'<text x="0" y="178" font-size="58" font-weight="800" class="t" letter-spacing="-1.5">Agent<tspan fill="url(#brand)">State</tspan>Storage</text>')
-    p.append(f'<text x="0" y="226" font-size="27" font-weight="600" class="t">The open session layer for AI agents</text>')
-    p.append(f'<text x="0" y="266" font-size="18" class="s">Snapshot, fork, resume and erase an agent session —</text>')
-    p.append(f'<text x="0" y="292" font-size="18" class="s">its KV, workspace and memory, together.</text>')
-    p.append(f'<text x="0" y="318" font-size="18" class="s">On your infrastructure. Any engine. Any cloud.</text>')
-    x = 0
-    for label, c in (("snapshot", t["kv"]), ("fork", t["ws"]), ("resume", t["green"]), ("erase", t["red"])):
-        g, cw = chip(t, x, 350, label, c, mono=True)
-        p.append(g)
-        x += cw + 12
-    p.append("</g>")
-    # right: a session tree that grows and forks
-    nodes = {"a": (800, 220), "b": (910, 220), "c": (1030, 128), "d": (1030, 220),
-             "e": (1030, 312), "f": (1150, 84), "g": (1150, 168), "h": (1150, 268), "i": (1150, 356)}
-    edges = [("a", "b", t["kv"]), ("b", "c", t["ws"]), ("b", "d", t["ws"]), ("b", "e", t["ws"]),
-             ("c", "f", t["mem"]), ("c", "g", t["mem"]), ("e", "h", t["green"]), ("e", "i", t["green"])]
-    for a, b, c in edges:
-        (x1, y1), (x2, y2) = nodes[a], nodes[b]
-        p.append(edge(t, x1 + 36, y1, x2 - 36, y2, c))
-    halos = {"b": t["ws"], "f": t["mem"], "h": t["green"]}
-    for k, (x0, y0) in nodes.items():
-        p.append(capsule(t, x0, y0, halos.get(k)))
-    p.append(f'<text x="910" y="188" text-anchor="middle" font-size="12" class="d m">fork ×3</text>')
-    p.append(f'<text x="800" y="262" text-anchor="middle" font-size="12" class="d m">s0</text>')
-    # legend
-    lx = 836
-    for label, c in (("KV", t["kv"]), ("workspace", t["ws"]), ("memory", t["mem"])):
-        p.append(f'<circle cx="{lx}" cy="410" r="5" fill="{c}"/>'
-                 f'<text x="{lx + 11}" y="415" font-size="14" class="s">{label}</text>')
-        lx += 22 + len(label) * 8.5 + 18
-    p.append("</svg>")
-    return "\n".join(p)
-
-
-def session_tree(t):
-    w, h = 1280, 620
-    p = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" width="{w}" height="{h}" '
-         f'role="img" aria-label="Session tree: snapshot, fork, resume after a crash, and cascading erase">',
-         style(t), defs(t, w, h)]
-    p.append(f'<text x="48" y="58" font-size="24" font-weight="700" class="t">One session tree. Every kind of state.</text>')
-    p.append(f'<text x="48" y="86" font-size="16" class="s">Each snapshot captures the KV prefix, the workspace and the memory version under one lineage id.</text>')
-    y0 = 210
-    main = [(140, "s0"), (300, "s1"), (460, "s2")]
-    for (xa, _), (xb, _) in zip(main, main[1:]):
-        p.append(edge(t, xa + 36, y0, xb - 36, y0, t["kv"]))
-    # crash, then resume from s2
-    p.append(edge(t, 496, y0, 584, y0, t["red"]))
-    p.append(capsule(t, 620, y0, crashed=True))
-    p.append(f'<text x="620" y="{y0 - 30}" text-anchor="middle" font-size="13" class="m" fill="{t["red"]}">crash</text>')
-    p.append(f'<path d="M460 {y0 - 20}C500 {y0 - 110} 740 {y0 - 110} 780 {y0 - 20}" fill="none" stroke="{t["green"]}" stroke-width="2.2" class="flow"/>')
-    p.append(f'<text x="620" y="{y0 - 98}" text-anchor="middle" font-size="13" class="m" fill="{t["green"]}">resume from s2 — no tool call replayed</text>')
-    p.append(edge(t, 816, y0, 904, y0, t["kv"]))
-    for x, lab in main + [(780, "s3′"), (940, "s4")]:
-        p.append(capsule(t, x, y0, halo=t["green"] if lab == "s3′" else None))
-        lx = x - 30 if lab == "s2" else x
-        p.append(f'<text x="{lx}" y="{y0 + 38}" text-anchor="middle" font-size="12" class="d m">{lab}</text>')
-    # fork from s2
-    fx = 640
-    for yf, lab in ((300, "f1"), (356, "f2"), (412, "f3")):
-        d = f"M480 {y0 + 16}C500 {yf} {fx - 90} {yf} {fx - 36} {yf}"
-        p.append(f'<path d="{d}" fill="none" stroke="{t["stroke"]}" stroke-width="2"/>')
-        p.append(f'<path d="{d}" fill="none" stroke="{t["ws"]}" stroke-width="2" class="flow"/>')
-        p.append(capsule(t, fx, yf, halo=t["ws"] if lab == "f2" else None))
-        p.append(f'<text x="{fx + 48}" y="{yf + 4}" font-size="12" class="d m">{lab}</text>')
-    p.append(f'<text x="730" y="352" font-size="14" class="s">fork in O(1), copy-on-write:</text>')
-    p.append(f'<text x="730" y="374" font-size="14" class="s">sub-agents · tree search · what-if</text>')
-    # compliance strip
-    sy = 470
-    p.append(f'<rect x="48" y="{sy}" width="1184" height="112" rx="16" fill="{t["panel2"]}" stroke="{t["stroke"]}"/>')
-    p.append(f'<text x="72" y="{sy + 30}" font-size="13" letter-spacing="1.5" class="d m">COMPLIANCE, BUILT IN</text>')
-    g, cw = chip(t, 72, sy + 52, "erase(subject=user-42)", t["red"], fs=14, mono=True)
-    p.append(g)
-    x = 72 + cw + 18
-    for label in ("memory v7", "12 embeddings", "KV prefix 3f9a…", "refs in s1–s4"):
-        p.append(f'<path d="M{x - 14} {sy + 69}h10" stroke="{t["red"]}" stroke-width="2" class="flow"/>')
-        g, cw = chip(t, x, sy + 52, label, t["red"], fs=13, mono=True)
-        p.append(g + f'<path d="M{x + 26} {sy + 69}h{cw - 40:.0f}" stroke="{t["red"]}" stroke-width="1.6" opacity=".8"/>')
-        x += cw + 22
-    g, cw = chip(t, x, sy + 52, "receipt ✓", t["green"], fs=13, mono=True)
-    p.append(g)
-    # legal hold note on the right
-    p.append(f'<g transform="translate(1062,{sy + 22})"><rect x="0" y="6" width="14" height="11" rx="2" fill="{t["mem"]}"/>'
-             f'<path d="M3 6V3a4 4 0 0 1 8 0v3" fill="none" stroke="{t["mem"]}" stroke-width="2"/>'
-             f'<text x="22" y="16" font-size="13" class="s">legal hold keeps the audit log</text></g>')
-    p.append("</svg>")
-    return "\n".join(p)
-
-
 # ---- architecture: the system picture ---------------------------------------
 # Drawn from the code, not the roadmap: solid = shipped, dashed + milestone tag
 # = planned. Two planes that share one node but not one store: session state
@@ -210,12 +38,14 @@ ARCH = {
                  tile_op=".92", sess="#A78BFA", kv="#22D3EE", aur1="#7C3AED", aur2="#0891B2",
                  aur_op=".28", frame="#3A4767", spark="#E0E7FF", core_glow=".30",
                  shadow="#000000", shadow_op=".55", plan="#FBBF24", later="#7C8AA5",
-                 ok="#34D399", warm="#F59E0B", cool="#38BDF8"),
+                 ok="#34D399", warm="#F59E0B", cool="#38BDF8", rec="#F472B6", bad="#F87171",
+                 off="#475569"),
     "light": dict(bg="#FBFCFF", dot="#CDD6E8", glass="#FFFFFF", glass_op=".9", tile="#F5F7FC",
                   tile_op="1", sess="#7C3AED", kv="#0891B2", aur1="#C4B5FD", aur2="#A5F3FC",
                   aur_op=".35", frame="#A9B6CF", spark="#7C3AED", core_glow=".14",
                   shadow="#1E293B", shadow_op=".10", plan="#B45309", later="#64748B",
-                  ok="#059669", warm="#D97706", cool="#0284C7"),
+                  ok="#059669", warm="#D97706", cool="#0284C7", rec="#DB2777", bad="#DC2626",
+                  off="#94A3B8"),
 }
 
 
@@ -239,7 +69,8 @@ def arch_style(t, a):
 </style>"""
 
 
-def arch_defs(t, a, w, h):
+def arch_defs(t, a, w, h, auroras=((250, 420), (800, 460))):
+    (ax1, ay1), (ax2, ay2) = auroras
     return f"""<defs>
   <pattern id="dots" width="22" height="22" patternUnits="userSpaceOnUse">
     <circle cx="1.5" cy="1.5" r="1.1" fill="{a['dot']}"/>
@@ -271,8 +102,8 @@ def arch_defs(t, a, w, h):
   </filter>
 </defs>
 <rect width="{w}" height="{h}" rx="20" fill="{a['bg']}"/>
-<ellipse cx="250" cy="420" rx="420" ry="360" fill="url(#aur1)"/>
-<ellipse cx="800" cy="460" rx="420" ry="360" fill="url(#aur2)"/>
+<ellipse cx="{ax1}" cy="{ay1}" rx="420" ry="360" fill="url(#aur1)"/>
+<ellipse cx="{ax2}" cy="{ay2}" rx="420" ry="360" fill="url(#aur2)"/>
 <rect width="{w}" height="{h}" rx="20" fill="url(#dots)" opacity=".7"/>"""
 
 
@@ -465,6 +296,208 @@ def architecture(t):
     p.append(mark(a, px0 + 30, cy0 + 90, "M4") + f'<text x="{px0 + 66}" y="{cy0 + 95}" font-size="14.5" class="s">cross-node data path</text>')
 
     p.extend(joint(a, x, y, c) for x, y, c in joints)
+    p.append("</svg>")
+    return "\n".join(p)
+
+
+# ---- hero and session tree: same visual language as the architecture -------
+# Same honesty rule: a verb or a picture that is not built yet carries its
+# milestone. The session tree is the M2 design; the "today" card says what
+# M1 already does. A snapshot pod has four lanes, one per kind of state.
+
+def lanes(a):
+    return (("history", a["sess"]), ("memory", a["rec"]), ("workspace", a["warm"]), ("KV", a["kv"]))
+
+
+def pod(t, a, x, y, halo=None, crashed=False):
+    """One snapshot: a glass pill with a dot per lane."""
+    out = []
+    if halo:
+        out.append(f'<ellipse cx="{x}" cy="{y}" rx="46" ry="26" fill="{halo}" opacity="{a["core_glow"]}" '
+                   f'filter="url(#bloom)" class="breathe"/>')
+    out.append(f'<rect x="{x - 34}" y="{y - 16}" width="68" height="32" rx="16" fill="{a["glass"]}" '
+               f'stroke="{a["bad"] if crashed else (halo or a["frame"])}" stroke-width="1.5"/>')
+    for dx, (_, c) in zip((-21, -7, 7, 21), lanes(a)):
+        out.append(f'<circle cx="{x + dx}" cy="{y}" r="4.3" fill="{a["off"] if crashed else c}"/>')
+    if crashed:
+        out.append(f'<path d="M{x - 8} {y - 8}l16 16m0-16l-16 16" stroke="{a["bad"]}" stroke-width="3" '
+                   f'stroke-linecap="round"/>')
+    return "".join(out)
+
+
+def link(x1, y1, x2, y2):
+    mx = (x1 + x2) / 2
+    return f"M{x1} {y1}C{mx} {y1} {mx} {y2} {x2} {y2}"
+
+
+def legend(t, a, x, y):
+    out = []
+    for label, c in lanes(a):
+        out.append(f'<circle cx="{x}" cy="{y}" r="4.5" fill="{c}"/>'
+                   f'<text x="{x + 10}" y="{y + 5}" font-size="14" class="s">{label}</text>')
+        x += 10 + len(label) * 7.6 + 22
+    return "".join(out)
+
+
+def pill(a, x, y, label, color, status=None, fs=15, h=36, strike=False):
+    """A tinted capsule with a dot and a mono label; optional status mark at the end."""
+    tw = len(label) * fs * 0.6
+    end = x + 28 + tw
+    if status in ("shipped", "partial"):
+        mx, w = end + 19, tw + 28 + 19 + 9 + 12
+    elif status:
+        mx, w = end + 21, tw + 28 + 12 + len(status) * 8.4 + 14 + 10
+    else:
+        mx, w = None, tw + 28 + 16
+    out = (f'<rect x="{x}" y="{y}" width="{w:.0f}" height="{h}" rx="{h / 2}" fill="{color}" fill-opacity=".12" '
+           f'stroke="{color}" stroke-opacity=".6"/>'
+           f'<circle cx="{x + 16}" cy="{y + h / 2}" r="4.5" fill="{color}"/>'
+           f'<text x="{x + 28}" y="{y + h / 2 + fs * 0.35:.1f}" font-size="{fs}" class="t m">{label}</text>')
+    if strike:
+        out += f'<path d="M{x + 26} {y + h / 2}h{tw + 4:.0f}" stroke="{color}" stroke-width="1.6" opacity=".85"/>'
+    if mx:
+        out += mark(a, mx, y + h / 2, status)
+    return out, w
+
+
+def status_key(t, a, x, y, items):
+    out = []
+    for st, label in items:
+        out.append(mark(a, x, y, st))
+        off = 16 if st in ("shipped", "partial") else len(st) * 8.4 + 12
+        out.append(f'<text x="{x + off}" y="{y + 5}" font-size="14" class="s">{label}</text>')
+        x += off + len(label) * 7.6 + 28
+    return "".join(out)
+
+
+def hero(t):
+    a = ARCH["dark" if t is THEMES["dark"] else "light"]
+    w, h = 1040, 430
+    L = 40
+    p = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" width="{w}" height="{h}" '
+         f'role="img" aria-label="AgentStateStorage: the open session layer for AI agents">',
+         arch_style(t, a), arch_defs(t, a, w, h, auroras=((230, 250), (840, 230)))]
+
+    # ---- words ------------------------------------------------------------------
+    p.append(f'<rect x="{L}" y="52" width="248" height="28" rx="14" fill="{a["kv"]}" fill-opacity=".1" '
+             f'stroke="{a["kv"]}" stroke-opacity=".55"/>'
+             f'<text x="{L + 14}" y="71" font-size="12.5" letter-spacing="2" class="m" fill="{a["kv"]}">'
+             f'OPEN SOURCE · APACHE-2.0</text>')
+    p.append(f'<text x="{L - 2}" y="142" font-size="46" font-weight="800" letter-spacing="-1.4" class="t">'
+             f'Agent<tspan fill="url(#word)">State</tspan>Storage</text>')
+    p.append(f'<text x="{L}" y="184" font-size="23" font-weight="650" class="t">The open session layer for AI agents</text>')
+    for i, line in enumerate(("Snapshot, fork, resume and erase an agent session —",
+                              "its history, memory, workspace and KV cache, together.",
+                              "On your infrastructure. Any engine. Any cloud.")):
+        p.append(f'<text x="{L}" y="{222 + i * 25}" font-size="16.5" class="s">{line}</text>')
+    x = L
+    for label, c, st in (("snapshot", a["kv"], "partial"), ("fork", a["sess"], "shipped"),
+                         ("resume", a["ok"], "shipped"), ("erase", a["bad"], "M2")):
+        g, cw = pill(a, x, 306, label, c, st)
+        p.append(g)
+        x += cw + 10
+    p.append(status_key(t, a, L + 9, 376, (("shipped", "works today"), ("partial", "per framework"), ("M2", "planned"))))
+
+    # ---- one session, forked ----------------------------------------------------
+    gx0, gy0, gx1, gy1 = 560, 36, w - 40, 394
+    p.append(glass(a, gx0, gy0, gx1 - gx0, gy1 - gy0, rx=22))
+    p.append(f'<text x="{gx0 + 22}" y="{gy0 + 32}" class="eb">ONE SESSION, FORKED</text>')
+    n = {"a": (618, 200), "b": (712, 200), "c": (822, 124), "d": (822, 200), "e": (822, 276),
+         "f": (934, 92), "g": (934, 156), "h": (934, 244), "i": (934, 308)}
+    edges = (("a", "b", a["kv"]), ("b", "c", a["sess"]), ("b", "d", a["sess"]), ("b", "e", a["sess"]),
+             ("c", "f", a["rec"]), ("c", "g", a["rec"]), ("e", "h", a["ok"]), ("e", "i", a["ok"]))
+    for k1, k2, c in edges:
+        (x1, y1), (x2, y2) = n[k1], n[k2]
+        p.append(beam(t, link(x1 + 34, y1, x2 - 34, y2), c, slow=k1 != "a"))
+    halos = {"b": a["sess"], "f": a["rec"], "h": a["ok"]}
+    for k, (x0, y0) in n.items():
+        p.append(pod(t, a, x0, y0, halos.get(k)))
+    p.append(f'<text x="712" y="170" text-anchor="middle" font-size="13" class="d m">fork ×3</text>')
+    p.append(f'<text x="618" y="236" text-anchor="middle" font-size="13" class="d m">s0</text>')
+    p.append(legend(t, a, gx0 + 26, gy1 - 28))
+    p.append("</svg>")
+    return "\n".join(p)
+
+
+def session_tree(t):
+    a = ARCH["dark" if t is THEMES["dark"] else "light"]
+    w, h = 1040, 640
+    L, R = 40, w - 40
+    p = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" width="{w}" height="{h}" '
+         f'role="img" aria-label="Session tree: snapshot, fork, resume after a crash, and cascading erase">',
+         arch_style(t, a), arch_defs(t, a, w, h, auroras=((300, 300), (760, 420)))]
+
+    # ---- header -------------------------------------------------------------------
+    p.append(f'<text x="{L}" y="54" font-size="23" font-weight="800" letter-spacing="-.4" class="t">'
+             f'One session tree. Every kind of state.</text>')
+    p.append(f'<text x="{L}" y="80" class="eb">SESSION TREE · THE M2 DESIGN</text>')
+    p.append(status_key(t, a, 700, 50, (("shipped", "works today"), ("M2", "planned"))))
+    p.append(f'<text x="{L}" y="112" font-size="15" class="s">A snapshot captures history (items), memory (records), '
+             f'workspace (blobs) and the KV prefix under one lineage id.</text>')
+
+    # ---- the tree -------------------------------------------------------------------
+    ty0, ty1 = 134, 474
+    p.append(glass(a, L, ty0, R - L, ty1 - ty0, rx=22))
+    p.append(mark(a, L + 24, ty0 + 26, "M2"))
+    p.append(legend(t, a, L + 26, ty1 - 26))
+    y0 = 256
+    xs = {"s0": 110, "s1": 228, "s2": 346, "x": 466, "s3′": 586, "s4": 704}
+    for k1, k2 in (("s0", "s1"), ("s1", "s2"), ("s3′", "s4")):
+        p.append(beam(t, f"M{xs[k1] + 34} {y0}H{xs[k2] - 34}", a["kv"]))
+    p.append(beam(t, f"M{xs['s2'] + 34} {y0}H{xs['x'] - 34}", a["bad"]))
+    p.append(f'<text x="{xs["x"]}" y="{y0 + 40}" text-anchor="middle" font-size="13" class="m" fill="{a["bad"]}">crash</text>')
+    # resume: an arc from s2 over the crash to s3′
+    arc = f"M{xs['s2']} {y0 - 18}C{xs['s2'] + 40} {y0 - 112} {xs['s3′'] - 40} {y0 - 112} {xs['s3′']} {y0 - 18}"
+    p.append(beam(t, arc, a["ok"]))
+    p.append(f'<text x="{xs["x"]}" y="{y0 - 104}" text-anchor="middle" font-size="13.5" class="m" fill="{a["ok"]}">'
+             f'resume from s2 · no tool call replayed</text>')
+    # forks from s2
+    fx = 540
+    for yf, lab in ((336, "f1"), (384, "f2"), (432, "f3")):
+        p.append(beam(t, link(xs["s2"] + 20, y0 + 16, fx - 34, yf), a["sess"], slow=True))
+        p.append(pod(t, a, fx, yf, a["sess"] if lab == "f2" else None))
+        p.append(f'<text x="{fx + 44}" y="{yf + 5}" font-size="13" class="d m">{lab}</text>')
+    p.append(f'<text x="{fx + 82}" y="372" font-size="15" font-weight="650" class="t">fork · copy-on-write, O(1)</text>')
+    p.append(f'<text x="{fx + 82}" y="396" font-size="13" class="d m">sub-agents · tree search · what-if</text>')
+    for k, x in xs.items():
+        if k == "x":
+            p.append(pod(t, a, x, y0, crashed=True))
+            continue
+        p.append(pod(t, a, x, y0, a["ok"] if k == "s3′" else None))
+        lx = x - 26 if k == "s2" else x
+        p.append(f'<text x="{lx}" y="{y0 + 40}" text-anchor="middle" font-size="13" class="d m">{k}</text>')
+
+    # today, in M1: what already works without the tree
+    cx0, cy0 = 784, 168
+    p.append(f'<rect x="{cx0}" y="{cy0}" width="{R - 20 - cx0}" height="150" rx="14" fill="{a["tile"]}" '
+             f'fill-opacity="{a["tile_op"]}" stroke="{a["ok"]}" stroke-opacity=".55"/>')
+    p.append(f'<text x="{cx0 + 18}" y="{cy0 + 28}" class="eb" style="fill:{a["ok"]}">TODAY, IN M1</text>')
+    for i, line in enumerate(("resume after a restart", "fork by copy", "framework snapshots")):
+        y = cy0 + 58 + i * 30
+        p.append(mark(a, cx0 + 27, y, "shipped") + f'<text x="{cx0 + 44}" y="{y + 5}" font-size="14.5" class="s">{line}</text>')
+
+    # ---- erase · hold · audit ---------------------------------------------------------
+    ey0 = ty1 + 22
+    p.append(glass(a, L, ey0, R - L, 114, rx=20, edge=a["bad"]))
+    p.append(f'<text x="{L + 22}" y="{ey0 + 30}" class="eb" style="fill:{a["bad"]}">ERASE · HOLD · AUDIT</text>')
+    p.append(mark(a, L + 254, ey0 + 25, "M2"))
+    p.append(f'<g transform="translate({R - 262},{ey0 + 14})"><rect x="0" y="6" width="14" height="11" rx="2" fill="{a["warm"]}"/>'
+             f'<path d="M3 6V3a4 4 0 0 1 8 0v3" fill="none" stroke="{a["warm"]}" stroke-width="2"/>'
+             f'<text x="22" y="16" font-size="14" class="s">legal hold keeps the audit log</text></g>')
+    x, y = L + 22, ey0 + 54
+    g, cw = pill(a, x, y, "erase(user-42)", a["bad"], fs=13, h=34)
+    p.append(g)
+    x += cw
+    for label in ("memory v7", "12 embeddings", "KV prefix 3f9a…", "refs in s1–s4"):
+        p.append(beam(t, f"M{x + 2} {y + 17}H{x + 14}", a["bad"]))
+        x += 16
+        g, cw = pill(a, x, y, label, a["bad"], fs=13, h=34, strike=True)
+        p.append(g)
+        x += cw
+    p.append(beam(t, f"M{x + 2} {y + 17}H{x + 14}", a["ok"]))
+    g, cw = pill(a, x + 16, y, "receipt ✓", a["ok"], fs=13, h=34)
+    assert x + 16 + cw <= R - 16, "erase chain overflows the card"
+    p.append(g)
     p.append("</svg>")
     return "\n".join(p)
 
