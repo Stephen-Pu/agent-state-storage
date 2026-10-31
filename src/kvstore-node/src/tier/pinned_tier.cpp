@@ -56,6 +56,15 @@ std::unique_ptr<PinnedTier> PinnedTier::Create(const Options& opts, std::string*
     if (opts.use_mlock) flags |= MAP_LOCKED;
 #endif
     void* p = ::mmap(nullptr, t->pool_bytes_, PROT_READ | PROT_WRITE, flags, -1, 0);
+#ifdef MAP_LOCKED
+    if (p == MAP_FAILED && (flags & MAP_LOCKED)) {
+        // Over the locked-memory limit (ulimit -l), MAP_LOCKED fails the
+        // whole mmap with EAGAIN. Map unlocked instead; the mlock() below
+        // then fails too and warns, so the tier runs without pinning rather
+        // than not at all.
+        p = ::mmap(nullptr, t->pool_bytes_, PROT_READ | PROT_WRITE, flags & ~MAP_LOCKED, -1, 0);
+    }
+#endif
     if (p == MAP_FAILED) {
         if (err) *err = std::string("pinned_tier: mmap failed: ") + std::strerror(errno);
         return nullptr;
