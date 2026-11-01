@@ -109,6 +109,10 @@ kvcache_add_test(test_art_concurrent   prefix/art_concurrent_test.cpp   ${NODE_P
 kvcache_add_test(test_art_snapshot     prefix/art_snapshot_test.cpp     ${NODE_PREFIX_SRCS})
 kvcache_add_test(test_art_wal          prefix/art_wal_test.cpp          ${NODE_PREFIX_SRCS})
 kvcache_add_test(test_state_wal        persist/state_wal_test.cpp       ${NODE_PERSIST_SRCS})
+kvcache_add_test(test_ordered_log_store session/ordered_log_store_test.cpp
+                 ${KVCACHE_NODE_SRC}/session/ordered_log_store.cpp)
+kvcache_add_test(test_blob_store       session/blob_store_test.cpp
+                 ${KVCACHE_NODE_SRC}/session/blob_store.cpp)
 kvcache_add_test(test_rocksdb_store    meta/rocksdb_store_test.cpp      ${NODE_META_SRCS})
 if(KVCACHE_ENABLE_ROCKSDB)
     target_link_libraries(test_rocksdb_store PRIVATE RocksDB::rocksdb)
@@ -511,6 +515,14 @@ if(KVCACHE_HAVE_GRPC)
     kvcache_add_test(test_grpc_server_tls
                       grpc/grpc_server_tls_test.cpp)
     target_link_libraries(test_grpc_server_tls PRIVATE
+        kvstore_node_grpc
+        kvcache
+    )
+
+    # M1 — agentstate.v1 service over an in-process gRPC server.
+    kvcache_add_test(test_agent_state_service
+                      session/agent_state_service_test.cpp)
+    target_link_libraries(test_agent_state_service PRIVATE
         kvstore_node_grpc
         kvcache
     )

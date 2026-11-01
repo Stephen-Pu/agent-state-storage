@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <grpcpp/grpcpp.h>
 
@@ -39,6 +40,8 @@ class GrpcServer {
     // The service ptr is borrowed, not owned — the caller (main.cpp /
     // tests) keeps it alive for the server's lifetime.
     GrpcServer(const Options& opts, ::grpc::Service* service);
+    // M1 — several services on one listener (NodeData + AgentState).
+    GrpcServer(const Options& opts, const std::vector<::grpc::Service*>& services);
     ~GrpcServer();
 
     GrpcServer(const GrpcServer&)            = delete;

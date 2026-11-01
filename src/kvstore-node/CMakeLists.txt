@@ -29,6 +29,9 @@ set(NODE_CORE_SRCS
     src/prefix/art_wal.cpp
     # persist
     src/persist/state_wal.cpp
+    # M1 — agentstate.v1 storage
+    src/session/ordered_log_store.cpp
+    src/session/blob_store.cpp
     # ingest
     src/ingest/mutable_buffer.cpp
     src/ingest/watermark.cpp
@@ -150,6 +153,8 @@ if(KVCACHE_HAVE_GRPC)
         src/grpc/node_data_service.cpp
         src/grpc/grpc_server.cpp
         src/grpc/grpc_replica_source.cpp
+        # M1 — agentstate.v1 service
+        src/session/agent_state_service.cpp
     )
     target_include_directories(kvstore_node_grpc
         PUBLIC

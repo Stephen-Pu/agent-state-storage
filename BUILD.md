@@ -124,9 +124,35 @@ To run against a pre-built library:
 KVCACHE_LIB=/abs/path/to/libkvcache.so pytest src/adapters/vllm/tests -v
 ```
 
+## Python SDK and agent framework integrations (M1)
+
+The session API (`agentstate.v1`) is served by `kvstore-node` when it is built
+with gRPC C++ (`brew install grpc` on macOS; on Linux, Ubuntu 24.04's
+`libgrpc++-dev protobuf-compiler-grpc` — 22.04's gRPC package has no CMake
+config, so the node builds without it there).
+
+```bash
+cmake -S src -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build --target kvstore-node
+build/kvstore-node/kvstore-node --grpc-port 7000 --state-dir ./agent-state
+
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e "src/sdk/python[openai-agents,langgraph,test]"
+KVSTORE_NODE_BIN=build/kvstore-node/kvstore-node pytest src/sdk/python/tests
+python examples/m1_quickstart.py --target localhost:7000
+```
+
+Without `--state-dir` the node keeps agent state in memory only. The Python
+stubs are committed; regenerate them with `scripts/gen_python_proto.sh` after
+changing `src/core/proto/agentstate.proto`.
+
+On macOS with Homebrew, if both `openssl@3` and `openssl@4` are installed,
+configure with `-DOPENSSL_ROOT_DIR=$(brew --prefix openssl@3)` so the build
+uses the same OpenSSL as Homebrew's gRPC.
+
 ## CI
 
-GitHub Actions (`.github/workflows/ci.yml`) runs 7 jobs on every push and PR:
+GitHub Actions (`.github/workflows/ci.yml`) runs these jobs on every push and PR:
 
 | Job                  | Time   | What it does                                  |
 | -------------------- | ------ | --------------------------------------------- |
@@ -136,6 +162,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs 7 jobs on every push and PR:
 | `go-operator`        | ~1 min | `go vet`, `go build`                           |
 | `go-kvctl`           | ~30 s  | `go vet`, `go build`                           |
 | `python-adapter`     | ~3 min | Build `libkvcache.so` + pytest E2E             |
+| `python-sdk`         | ~5 min | Ubuntu 24.04: `kvstore-node` with gRPC, agent-state ctest, SDK + integrations pytest |
 | `helm-lint`          | ~30 s  | `helm lint` + `helm template`                  |
 
 Total wall-clock ≈ 5 minutes (jobs run in parallel).

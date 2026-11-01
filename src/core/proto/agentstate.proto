@@ -1,0 +1,165 @@
+// M1 — agentstate.v1: the agent session API served by kvstore-node.
+//
+// Three storage primitives, all scoped to a tenant and durable on one node
+// when the node runs with --state-dir:
+//   * Items   — an ordered log per session (conversation history).
+//   * Records — an ordered key space with atomic batches and prefix scans
+//               (framework checkpoints, long-term stores).
+//   * Blobs   — named byte streams (sandbox workspace snapshots).
+//
+// Tenant: with mTLS the tenant comes from the client certificate, and a
+// request `tenant` that names a different tenant is rejected with
+// PERMISSION_DENIED. Without TLS (local development only) the request
+// `tenant` field is required and trusted.
+//
+// Limits: one item or record value is at most 4 MiB, one request at most
+// 64 MiB; a blob at most 4 GiB, streamed in chunks of at most 1 MiB.
+// GetItems and ScanRecords pages stop at about 4 MiB of payload (always at
+// least one entry) and set has_more.
+syntax = "proto3";
+package agentstate.v1;
+
+option go_package = "github.com/Stephen-Pu/agent-state-storage/gen/agentstate/v1;agentstatev1";
+
+service AgentState {
+  // ---- Items ---------------------------------------------------------------
+  // Append items to the end of a session. Returns the sequence number the
+  // next appended item will get.
+  rpc AppendItems(AppendItemsRequest) returns (AppendItemsResponse);
+  // The latest `limit` items (all when 0) older than `before_seq` (0 = the
+  // newest), oldest first, one page at a time: when `has_more`, ask again
+  // with before_seq = first_seq.
+  rpc GetItems(GetItemsRequest) returns (GetItemsResponse);
+  // Remove and return the latest item.
+  rpc PopItem(PopItemRequest) returns (PopItemResponse);
+  rpc ClearSession(ClearSessionRequest) returns (ClearSessionResponse);
+  // Copy every item of `source` into `target`, which must be empty
+  // (FAILED_PRECONDITION otherwise).
+  rpc ForkSession(ForkSessionRequest) returns (ForkSessionResponse);
+
+  // ---- Records -------------------------------------------------------------
+  // Apply puts and deletes atomically.
+  rpc WriteRecords(WriteRecordsRequest) returns (WriteRecordsResponse);
+  rpc GetRecords(GetRecordsRequest) returns (GetRecordsResponse);
+  // Keys under `prefix`, strictly between `start_after` and `end_before`
+  // (each ignored when empty), in key order or reversed. At most `limit`
+  // records per call (server cap 1000 records or about 4 MiB; 0 = the cap);
+  // `has_more` says whether more remain.
+  rpc ScanRecords(ScanRecordsRequest) returns (ScanRecordsResponse);
+  rpc DeleteRecordPrefix(DeleteRecordPrefixRequest) returns (DeleteRecordPrefixResponse);
+
+  // ---- Blobs ---------------------------------------------------------------
+  // The first chunk carries tenant and name. The blob replaces any blob of
+  // the same name only once the whole stream has arrived.
+  rpc PutBlob(stream PutBlobChunk) returns (PutBlobResponse);
+  // NOT_FOUND when absent.
+  rpc GetBlob(GetBlobRequest) returns (stream BlobChunk);
+  rpc StatBlob(StatBlobRequest) returns (StatBlobResponse);
+  rpc DeleteBlob(DeleteBlobRequest) returns (DeleteBlobResponse);
+}
+
+message AppendItemsRequest {
+  string tenant = 1;
+  string session = 2;
+  repeated bytes items = 3;
+}
+message AppendItemsResponse { uint64 next_seq = 1; }
+
+message GetItemsRequest {
+  string tenant = 1;
+  string session = 2;
+  uint32 limit = 3;
+  uint64 before_seq = 4;
+}
+message GetItemsResponse {
+  repeated bytes items = 1;
+  bool has_more = 2;    // older items remain before first_seq
+  uint64 first_seq = 3; // sequence number of items[0]
+}
+
+message PopItemRequest {
+  string tenant = 1;
+  string session = 2;
+}
+message PopItemResponse {
+  bool found = 1;
+  bytes item = 2;
+}
+
+message ClearSessionRequest {
+  string tenant = 1;
+  string session = 2;
+}
+message ClearSessionResponse { uint64 removed = 1; }
+
+message ForkSessionRequest {
+  string tenant = 1;
+  string source = 2;
+  string target = 3;
+}
+message ForkSessionResponse { uint64 copied = 1; }
+
+message Record {
+  bytes key = 1;
+  bytes value = 2;
+}
+
+message WriteRecordsRequest {
+  string tenant = 1;
+  repeated Record puts = 2;
+  repeated bytes deletes = 3;
+}
+message WriteRecordsResponse {}
+
+message GetRecordsRequest {
+  string tenant = 1;
+  repeated bytes keys = 2;
+}
+message GetRecordsResponse { repeated Record found = 1; }
+
+message ScanRecordsRequest {
+  string tenant = 1;
+  bytes prefix = 2;
+  bytes start_after = 3;
+  bytes end_before = 4;
+  uint32 limit = 5;
+  bool reverse = 6;
+}
+message ScanRecordsResponse {
+  repeated Record records = 1;
+  bool has_more = 2;
+}
+
+message DeleteRecordPrefixRequest {
+  string tenant = 1;
+  bytes prefix = 2;
+}
+message DeleteRecordPrefixResponse { uint64 removed = 1; }
+
+message PutBlobChunk {
+  string tenant = 1;
+  string name = 2;
+  bytes data = 3;
+}
+message PutBlobResponse { uint64 size = 1; }
+
+message GetBlobRequest {
+  string tenant = 1;
+  string name = 2;
+}
+message BlobChunk { bytes data = 1; }
+
+message StatBlobRequest {
+  string tenant = 1;
+  string name = 2;
+}
+message StatBlobResponse {
+  bool exists = 1;
+  uint64 size = 2;
+}
+
+message DeleteBlobRequest {
+  string tenant = 1;
+  string name = 2;
+}
+message DeleteBlobResponse { bool existed = 1; }

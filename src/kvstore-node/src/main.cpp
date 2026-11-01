@@ -26,6 +26,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <thread>
@@ -48,6 +49,7 @@
 #include "kvcache/kv_abi.h"
 #include "grpc/grpc_server.h"
 #include "grpc/node_data_service.h"
+#include "session/agent_state_service.h"
 #include "routing/hrw.h"
 #endif
 
@@ -59,7 +61,8 @@ void Usage(const char* argv0) {
         "       [--tls-ca PEM] [--tls-cert PEM] [--tls-key PEM]\n"
         "       [--node-id ID --etcd-endpoints ep1,ep2 --advertise-host H]\n"
         "       [--regulated-mode] [--boundary-allow RULE ...]\n"
-        "       [--cold-base-url URL]\n",
+        "       [--cold-base-url URL]\n"
+        "       [--state-dir DIR]\n",
         argv0);
 }
 
@@ -95,6 +98,7 @@ int main(int argc, char** argv) {
     //                               the kColdTier egress sink for the startup gate)
     kvcache::node::runtime::RegulatedFlags reg_flags;
     std::string cold_base_url;
+    std::string state_dir;  // M1 — agentstate.v1 durability
     for (int i = 1; i < argc; ++i) {
         if (TryFlag(i, argc, argv, "--config",          &o.config_path)) continue;
         if (TryFlag(i, argc, argv, "--grpc-port",       &grpc_port_s))   continue;
@@ -118,6 +122,7 @@ int main(int argc, char** argv) {
             }
         }
         if (TryFlag(i, argc, argv, "--cold-base-url",   &cold_base_url))    continue;
+        if (TryFlag(i, argc, argv, "--state-dir",       &state_dir))        continue;
         if (std::strcmp(argv[i], "-h") == 0 ||
             std::strcmp(argv[i], "--help") == 0) {
             Usage(argv[0]);
@@ -245,7 +250,44 @@ int main(int argc, char** argv) {
     grpc_opts.tls_ca_pem_path   = tls_ca;
     grpc_opts.tls_cert_pem_path = tls_cert;
     grpc_opts.tls_key_pem_path  = tls_key;
-    kvcache::node::grpc_server::GrpcServer grpc(grpc_opts, &svc);
+    // M1 — agentstate.v1 (items, records, blobs) on the same listener.
+    // Durable under --state-dir; in memory only without it.
+    std::unique_ptr<kvcache::node::session::OrderedLogStore> state_store;
+    std::unique_ptr<kvcache::node::session::BlobStore>       state_blobs;
+    {
+        std::string serr;
+        std::string log_path, blob_dir;
+        if (state_dir.empty()) {
+            std::fprintf(stderr,
+                "kvstore-node: --state-dir not set; agent state is in memory only\n");
+        } else {
+            std::error_code ec;
+            std::filesystem::create_directories(state_dir, ec);
+            if (ec) {
+                std::fprintf(stderr, "kvstore-node: --state-dir %s: %s\n",
+                             state_dir.c_str(), ec.message().c_str());
+                kv_ctx_close(ctx);
+                return 1;
+            }
+            log_path = (std::filesystem::path(state_dir) / "records.log").string();
+            blob_dir = (std::filesystem::path(state_dir) / "blobs").string();
+        }
+        state_store = kvcache::node::session::OrderedLogStore::Open(log_path, &serr);
+        if (state_store) state_blobs = kvcache::node::session::BlobStore::Open(blob_dir, &serr);
+        if (!state_store || !state_blobs) {
+            std::fprintf(stderr, "kvstore-node: agent state: %s\n", serr.c_str());
+            kv_ctx_close(ctx);
+            return 1;
+        }
+    }
+    kvcache::node::session::AgentStateServiceImpl agent_state(state_store.get(),
+                                                              state_blobs.get());
+    if (!tls_ca.empty() && !tls_cert.empty() && !tls_key.empty()) {
+        // The listener requires client certs: take the tenant from them.
+        agent_state.EnableCertTenant(nullptr);
+    }
+    kvcache::node::grpc_server::GrpcServer grpc(
+        grpc_opts, std::vector<::grpc::Service*>{&svc, &agent_state});
     if (!grpc.Ok()) {
         std::fprintf(stderr, "kvstore-node: grpc: %s\n", grpc.error().c_str());
         kv_ctx_close(ctx);
@@ -255,6 +297,15 @@ int main(int argc, char** argv) {
     o.grpc_port          = grpc.BoundPort();  // for log clarity
     std::fprintf(stderr, "kvstore-node: grpc tls=%s\n",
                   grpc.TlsEnabled() ? "on" : "off");
+    if (!grpc.TlsEnabled() && grpc_opts.bind_host != "127.0.0.1" &&
+        grpc_opts.bind_host != "::1" && grpc_opts.bind_host != "localhost") {
+        std::fprintf(stderr,
+            "kvstore-node: WARNING: gRPC is plaintext on %s:%u and agentstate.v1 "
+            "trusts the tenant named in each request; anyone who can reach this "
+            "port can read or erase any tenant's state. Use --tls-ca/--tls-cert/"
+            "--tls-key outside a single trusted machine.\n",
+            grpc_opts.bind_host.c_str(), static_cast<unsigned>(grpc.BoundPort()));
+    }
 
     // ---- Phase Q-1: optional cluster registration + fan-out ---------
     std::unique_ptr<kvcache::node::cluster::HttpEtcdClient>     etcd;
